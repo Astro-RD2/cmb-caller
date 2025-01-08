@@ -1,0 +1,199 @@
+夜市叫叫我系統設計
+--------------------------
+
+1. 概述
+  本專案目的是建立一泰偉自己的叫號機軟硬體系統。
+  目前先針對小型熱門攤販排隊等候需求為標的。未來將含括其他系統商例如免排的所有功能.
+  
+  另外，夜市叫叫我系統附屬於叫叫我系統 (CallMeBack) 的一部分。 
+  因兩系統初期階段關聯性少且開發性質略有不同 (前者包含硬體、低階控制)，故暫時分成兩個獨立的 Github 儲存庫 (repository).
+  
+
+2. 基本需求概述
+  (1) Caller (終端設備): 外觀包含一高亮度數字顯示器、以及一分離式鍵盤，安裝於商家現場。 商家能透過鍵盤輸入號碼並將其即時顯示於數字顯示器上。
+      - 於本專案，Caller (終端設備) 泛指 數字顯示器 + 分離式鍵盤 + Caller module 的組合。
+        "數字顯示器 + 分離式鍵盤" 為外購。 內嵌之 Caller module 則為泰偉研發。
+  (2) Caller module (終端內嵌模組): 內嵌於 caller 內的單晶片模組 (ESP32)。主要功能是監視數字顯示器內容(數字)，然後將內容(數字)傳遞給中央。
+      此為一單晶片模組 (目前選擇 ESP32)。主要功能是監視數字顯示器內容(數字)，以及將內容(數字)傳遞給中央。
+      透過一外部 LED indicator 顯示連線功能是否正常以及目前是否位於設定模式。
+         連線中(紅色閃爍) -> 無法連線(紅色恆亮) 或 連線(綠色恆亮)   註: 如果連線失敗，應該會一直重複嘗試，所以紅色閃爍以及紅色恆亮會交替。
+         設定模式(綠色閃爍)
+  (3) Caller ID: 每個 Caller module 會有一唯一 Caller ID, 格式為小寫英文以及數字混合共五碼, 但不包含母音 'aeiou' 和 數字 '4', 故總共 30 種不同的字元.
+                 即每一碼都是 "012356789bcdfghjklmnpqrstvwxyz" 擇一，因為共 5 碼，故總共有 30*30*30*30*30=24,300,000 種 Caller ID. 
+                 (?) 並希望排除全部相同字元的情況 (即至少要有兩種或以上不同的字元).
+  (4) Vendor (商家) 與 Vendor ID: Vendor 表示店家/攤販. 而每一 Vendor 會有一唯一 Vendor ID 用來於系統內識別是哪一個商家。
+  (5) 初始化流程: 於工廠內，對 caller (caller module) 進行設定 caller ID 的動作. 並貼上貼紙，
+      Caller ID 格式: "SN: <CMB>-xxxxx" 貼於 caller 外殼。
+  (6) 發貨前作業:
+      於後臺管理網頁，進行 Caller ID 與 Vender ID 的連結.
+      寄送 Caller 至商家。
+  (7) 現場架設作業:
+      硬體、連接線、電源架設。
+      進入 "Caller module 設定模式" 進行相關參數設定。
+  (8) Caller module 設定作業:
+      現場工程人員或商家，透過一特定 App 連接 Caller module，進行 Wifi 參數設定。
+      此模式亦提供測試功能，回報狀態包括: 基本是否能連線到 internet, 以及是否能連線到 CallMeBack 中央。
+      考慮攤販可能常移動, 可提供多組 Wifi profile 供選擇設定。
+
+3. Key components
+  (1) Caller module:
+    - 此為單晶片硬體 + Firmware/BSP + 執行於其上的應用程式
+    - 目前選用 ESP32 單晶片。支援 WiFi、藍芽，基本I/O等功能。內建 4KB Flash 與 ? RAM.
+    - 主要功能是監視數字顯示器內容(數字)，然後將內容(數字)傳遞給中央。
+    - 應用程式名稱: cmb-caller?
+      (todo?)image名稱/路徑、架設方式、燒錄設備/程式、連接方式?
+  (2) Caller flash burning:
+    - 燒錄程式碼至 Caller module 的 flash 內。 
+    - 程式名稱: cmb-caller-burner?
+  (3) Caller ID generator
+    - 產生/獲得一新 Caller ID 並儲存至 Caller module 的 flash 內。 
+    - 程式名稱: cmb-caller-id-generator?
+  (4) Setting APP (簡稱 "設定 App") or Browser (簡稱: "終端設備設定UI/Web" 或 "終端內嵌模組設定UI/Web")
+    - 與 Caller module 連線後，提供 UI, 可對 Caller module 進行相關設定。
+    - 可顯示 Caller module 的 Caller ID 與 WiFi 參數. 如果採用 APP 方式, 可連線至 CallMeBack 系統查詢對應商家資訊.
+    - 可設定 Caller module 的 WiFi 連線參數.
+    - 基於 Vendor 可能跑各處營運. 建議於本地端儲存多組 WiFi 參數 profile, 可快速選擇某組來設定至 Caller module.
+      第一組地點 xxxxxxxx  SSID:xxxxx  Password:xxxxxx
+      第二組地點 yyyyyyyy  SSID:yyyyy  Password:yyyyyy
+      ...
+    - 程式名稱: cmp-caller-setting-app?
+    - 內來還可透過此 App 來設定相關資訊, 例如營業時間等。 (Google Map 即可)
+  (5) Caller management web
+    - 包括網頁與相關資料庫。主要功能為提供 Caller 與 Vendor 連結管理 UI。
+    - 狀態查詢。
+    - Provided by CallMeBack system
+  (6) 號碼接收 Service 
+    - 執行於雲端, 接受 Caller module 登入以及接收傳來的相關資訊. 資訊內容主要為目前號碼回報.
+    - 使用 Websocket 或 Resetful (prefer) 建立連線.
+    - 程式名稱: cmb-caller-frontend?
+  (7) CallMeBack Caller API
+    - 一組 API 供 "號碼接收 service" 呼叫, 用來將目前叫號機資訊(數字) 傳遞給 CallMeBack 系統.
+    - API:
+      - ReceiveNum (Caller ID, current number)
+        return OK? or FAIL?
+  (8) 其它輔助 API
+      - FetchVendorInfoByCallerID (Caller ID)
+        return OK with Vendor info, or FAIL?
+
+4. 相關流程
+4.1 Caller module 初始化流程: 
+  (1) 營運商工程人員/操作人員於工廠內，對 Caller (caller module) 進行設定 Caller ID 的動作.
+  (2) 燒錄 program image 至 flash
+    - 程式名稱: (cmb-caller-burner?)
+    - (todo?)image名稱/路徑、架設方式、燒錄設備/程式、連接方式?
+  (3) 設定/變更 Caller ID, 儲存於 flash
+    - 名稱: Caller ID generator 
+    - (filename: cmb-caller-id-generator)
+      (name abbrev: cmcb_*)
+    - Caller ID 數值產生:
+      方式一: 透過一文字 log 檔, 內容為之前建立的 Caller ID.下一次新 ID 即從最後一個 Caller ID 的下一筆.
+      方式二: 或自系統資料庫(透過 API)申請一新 Caller ID.透過此方式，可順便於資料庫內建立一筆 Caller record。
+    - 功能:
+        產生(方式一) 或自系統申請(方式二) 一個新 Caller ID 
+        透過 USB 連接 caller module 內的 caller-id-config module, 可讀取目前 Caller ID 以及設定新的 Caller ID.
+        此程式的 UI 可顯示目前 Caller ID，以及一按鈕用來下令設定新 Caller ID 進 Caller module。
+
+4.2 Caller ID 與 Vendor ID 連結管理流程
+  (1) 營運商操作人員透過瀏覽器連接一後臺管理程式 (web)，進行此流程。
+  (2) 考慮: 是否需要有一 table 維護 Caller (caller_id*)
+  (3) 功能: 
+    - 建立 Caller ID 與 Vendor ID 連結關係。目前定義一個 Caller ID 只能與一個 Vendor ID 建立連結，反之亦然。
+      如果該 Caller ID 已經連結其它 Vendor，或欲連結進之 Vendor 已經捆綁其它 Caller ID，需要警告並進行相關處置。
+      (todo) 處置方式。
+    - 解除 Caller ID 與 Vendor ID 的連結關係。
+    - 相關查詢: 自 Caller ID，查詢所連結 Vendor (ID)
+                 自 Vendor ID/Name/Tel等, 查詢所連結 Caller (ID)
+  (4) API參考: 透過 Caller ID查詢所連結之 Vendor 相關資訊.提供 "設定 App" 進行查詢。
+
+4.3 現場建置/設定流程
+  (1) Caller 硬體、接線、電源之架設。
+  (2) 透過特定 App 或是瀏覽器連接 Caller module 內的 caller-config module，進行相關 WiFi 參數設定、測試。
+
+4.4 工程人員/商家設定 Caller module WiFi 參數的幾種方式
+  (1) 方式一: 透過 WiFi + 特定 App 或 瀏覽器
+    - 手機扮演 WiFi AP，Caller module 扮演 WiFi client device.
+    - 準備一工程手機，事先啟動 WiFi AP 功能，定死其 Setting SSID 為 CMB00000, 密碼為 88888888
+      此處稱為 Setting SSID，使有別於一般正常連線階段的 SSID。
+    - 啟動/Power on Caller. Caller module 於初始化階段，會有一段時間試圖透過 Setting SSID 連線至上述工程手機 WiFi AP.
+      - 一旦連線成功，Caller module 即進入設定模式。於此模式下，不再監視數字顯示器與回報，另外部 LED 會持續綠色慢速閃爍。
+      - 這段時間可於背景進行，目前暫定 10 秒。
+    - 如果要透過瀏覽器:
+      - 需要知道該 Caller 的 IP, 使能透過連覽器連線.
+        - 需要研究，此工程手機 AP 是否能指定一固定 IP 給 Caller module, 以利方便確定 IP.
+        - 透過某些 AP, e.g. Hotspot manager, 可以查看 WiFi 的連入 device IP 位址.
+      - Caller module 內需提供 Web server 功能以及瀏覽 page.
+      - 設定 WiFi 參數的方式:
+        - Caller module 需要能夠自行搜索 WiFi AP list.
+          (需要確認) Caller module 在已透過 WiFi 連線到手機的情況下，是否還有能力搜索其它 WiFi AP list (且僅限於 2.4G 頻帶)?
+        - 方式二: 手動輸入 SSID / Password 指定給 Caller ID.
+      - 此方式不太直覺，對工程人員 OK，但對店家可能有些吃力。
+    - 如果透過特定 Setting App
+      - App 內部自動 scan 各接入 IP, 判斷何者為 Caller module，然後將第一個發現*的 Caller module 定為目標.
+      - 設定 WiFi 參數的方式:
+        - 方式一: 透過 Caller module 搜索 WiFi AP list, 然後並於 Setting App UI 上進行選擇.
+          (需要確認) Caller module 在已透過 WiFi 連線到手機的情況下，是否還有能力搜索其它 WiFi AP list (且僅限於 2.4G 頻帶)?
+        - 方式二: 透過 Setting App UI, 手動輸入 SSID / Password, 然後傳遞給 Caller ID.
+  (2) 方式二: 透過 WiFi Direct (P2P) + 特定 App
+    - 手機扮演 Software WiFi AP; Caller module 扮演 WiFi device.
+    - 手機啟動特定 APP, APP 內部啟動 SoftAP 功能, 將產出此 SoftAP 的 Setting SSID/Password, 定死其 Setting SSID 為 CMB00000, 密碼為 88888888
+    - 啟動/Power on Caller module. Caller module 於初始化階段，會有一段時間透過 WiFi direct client 功能以及上述 Setting SSID/Password 嘗試與該 APP(SoftAP) 連線.
+    - 參考資料:
+      https://emmanuel-studios.blogspot.com/2020/02/esp32esp8266-support-wifi-direct.html
+      https://github.com/youmebangbang/esp8266-wifi-direct-examples
+      https://webbedxp.com/tech/kgeek/windows-10/what-is-wifi-direct-in-windows-10-and-how-to-use-it/
+  (3) 方式三: 透過藍芽 + 特定 App
+    - 手機扮演藍芽 host; Caller module 扮演藍芽 device. 
+    - 啟動 Caller 與特定 App. App 透過藍芽搜索 Caller module, 然後將第一個發現的 Caller module 定為目標並建立藍芽連線.
+  補充資料: 
+    - 經過實驗, 於 Android 手機, 一般 WiFi 與 WiFi AP 無法同時開啟。開一則另一自動關閉.
+    - WiFi direct 需要 WiFi 開啟, 但 WiFi 是否連到某 AP 不重要. 
+      WiFi direct 觀念是透過軟體方式自動建立一軟體 AP (SoftAP), 可以產生 WAP2/Personal 之 SSID/Password 供 WiFi direct device 連線.
+
+
+5. Graph
+  
+[Manufacturer]
+==================================================
+
+[Windows PC]
++------------------------+      +----------------+
+|Caller flash burning    |----->|Caller module   |
+|                        | USB  |                |
+|cmb-caller-burner       |      |(invalid/empty) |
++------------------------+      +----------------+
+
+[Windows PC]
++------------------------+      +---------------+
+|Caller ID generator     |----->|Caller module  |
+|                        | USB  |               |
+|cmb-caller-id-generator |      |cmb-caller     |
++------------------------+      +---------------+
+
+[Web browser]        [Cloud / Service]
++-------------+      +-----------------------+
+|Browser      |----->|Caller Management web  |
+|             |      |                       |
+|             |      |/caller-report?        |
++-------------+      +-----------------------+
+
+
+[Vendor spot]                                          [Cloud / GCP]
+======================================                 ==============
+                                                       [Cloud / Service]
++---------------+                                      +---------------------+ 
+|Caller module  |           +----------+               |Service              |    API of
+|               |-- Wifi -->| Wifi AP  |-- Internet -->|                     |--> CallMeBack sys
+|cmb-caller     |           +----------+               |cmb-caller-frontend  |
++---------------+                                      +---------------------+
+    ^
+    |
+    |WiFi direct (Setting SSID) or
+    |Bluetooth
+    |
++------------------------+
+|Setting App (on Phone)  |
+|                        |
+|cmb-caller-setting-app  |
++------------------------+
+
+

@@ -1,16 +1,24 @@
 # cmb-caller
-This project is a hardware/software system for project CallMeBack https://github.com/KillbugChance/callmeback
+This project is a hardware/software system for project CallMeBack.
 
 _Copyright by Astro Corp._
 
 ## Before delivery caller module
 - Burn program and configure unique caller ID into flash of caller module.
 ```
-+--------------------+      +---------------+
-|Caller ID generator |----->| Caller module |
-|                    |      |               |
-|                    |      | cmb-caller    |
-+--------------------+      +---------------+
+[Windows PC]
++------------------------+      +----------------+
+|Caller flash burning    |----->|Caller module   |
+|                        | USB  |                |
+|cmb-caller-burner       |      |(invalid/empty) |
++------------------------+      +----------------+
+
+[Windows PC]
++------------------------+      +---------------+
+|Caller ID generator     |----->|Caller module  |
+|                        | USB  |               |
+|cmb-caller-id-generator |      |cmb-caller     |
++------------------------+      +---------------+
 ```
 - Add the new caller ID into CallMeBack database and bind it with a specific vendor in management console (web UI).
 ```
@@ -23,33 +31,36 @@ _Copyright by Astro Corp._
 ```
 
 ## Set up caller module on site
-- Use the Setting App run on mobile phone to configure the WIFI parameters, e.g. SSID/Password), and something.
+- Use the "Setting App" run on mobile phone to configure the WIFI parameters, e.g. SSID/Password, and something into caller module.
 ```
-[Vendor]                                             [Cloud / GCP]
-+---------------+                                    +--------------+ 
-| Caller module |          +----------+              | Service      |    API of
-|               |-- Wifi --| Wifi AP  |-- Internet --|              |--- CallMeBack
-| cmb-caller    |          +----------+              | cmb-frontend |
-+---------------+                                    +--------------+ 
+[Vendor spot]                                          [Cloud / GCP]
+======================================                 ==============
+                                                       [Cloud / Service]
++---------------+                                      +---------------------+ 
+|Caller module  |           +----------+               |Service              |    API of
+|               |-- Wifi -->| Wifi AP  |-- Internet -->|                     |--> CallMeBack sys
+|cmb-caller     |           +----------+               |cmb-caller-frontend  |
++---------------+                                      +---------------------+
+    ^
     |
-    |Wifi or Bluetooth
+    |WiFi direct (Setting SSID) or
+    |Bluetooth
     |
- +--------------------+
- | Setting App        |
- |                    |
- | cmb-caller-setting |
- +--------------------+
++------------------------+
+|Setting App (on Phone)  |
+|                        |
+|cmb-caller-setting-app  |
++------------------------+
 ```
 
 ## Announcements
 - Official website: https://www.callmeback.com.tw
-- Line: "叫叫我" @callmeback https://line.me/R/ti/p/@787vjeld
-- Line customer service: "叫叫我(官方客服)" https://line.me/R/ti/p/@502njbyc
-- Parent Github repository: https://github.com/ghjando/callmeback
+- Line official: "叫叫我" @callmeback https://line.me/R/ti/p/@787vjeld
+- Line official customer service: "叫叫我(官方客服)" https://line.me/R/ti/p/@502njbyc
+- Github: https://github.com/Astro-RD2/cmb-caller
+- Project CallMeBack Github: https://github.com/callmeback-org/callmeback
 
 ## Third Party
-- MainPi 免排: 為叫號機系統商, 公司為奇城科技.  https://www.mainpi.com
-- 盈德科技
 
 ## Software Platform
 1. Most programs are coded in C and Python.

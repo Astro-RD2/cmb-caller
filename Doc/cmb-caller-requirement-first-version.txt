@@ -1,0 +1,101 @@
+夜市叫叫我系統初版設計
+------------------
+Version 1
+
+1. 概述
+  本專案目的是建立一泰偉自己的叫號機軟硬體系統。
+  目前先以小型熱門攤販排隊等候需求為標的。未來將含括其他系統商例如免排的所有功能.
+  
+  另外，夜市叫叫我系統附屬於叫叫我系統 (CallMeBack)。 
+  因兩系統初期階段關聯性少且開發性質略有不同 (前者包含硬體、低階控制)，故暫時分成兩個獨立的 Github 儲存庫 (repository).
+
+
+2. 基本需求概述
+  (1) Caller (終端設備): 外觀包含一高亮度數字顯示器、以及一分離式鍵盤，安裝於商家現場。 商家能透過鍵盤輸入號碼並將其即時顯示於數字顯示器上。
+      - 於本專案，Caller (終端設備) 泛指 數字顯示器 + 分離式鍵盤 + Caller module 的組合。
+        "數字顯示器 + 分離式鍵盤" 為外購。 內嵌之 Caller module 則為泰偉研發。
+
+  (2) Caller module (終端內嵌模組): 內嵌於 caller 內的單晶片模組 (ESP32)。主要功能是監視數字顯示器內容(數字)，然後將內容(數字)傳遞給中央。
+      此為一單晶片模組 (目前選擇 ESP32)。主要功能是監視數字顯示器內容(數字)，以及將內容(數字)傳遞給中央。
+      透過一外部 LED indicator 顯示連線狀況如下:
+         連線中(紅色閃爍) ----+---------------------成功---> 連線中(紅燈熄滅)
+              ^             |失敗, 持續 retry
+              |             |
+              +-------------+
+
+  (3) Caller ID: 每個 Caller module 會有一唯一 Caller ID, 格式為小寫英文以及數字混合共五碼, 但不包含母音 'aeiou' 和 數字 '4', 故總共 30 種不同的字元.
+                 即每一碼都是 "012356789bcdfghjklmnpqrstvwxyz" 擇一，因為共 5 碼，故總共有 30*30*30*30*30=24,300,000 種 Caller ID. 
+                 (?) 並希望排除全部相同字元的情況 (即至少要有兩種或以上不同的字元).
+                 且對應之目標 WiFi AP 參數:
+                     SSID: CMB<Caller ID>
+                     密碼: 88888888
+
+  (4) Vendor (商家) 與 Vendor ID: Vendor 表示店家/攤販. 而每一 Vendor 會有一唯一 Vendor ID 用來於系統內識別是哪一個商家。
+  
+  (5) Caller System ID (CallerSys ID) 叫號系統商 ID: 由 CallMeBack 系統事先提供, 寫死至 Caller Frontend.
+  
+  (6) 初始化流程: 於工廠內，對 caller (caller module) 進行燒綠與設定 Caller ID 的動作, 並貼上貼紙，
+      此第一版, 將 Caller ID, 目標SSID/密碼皆直接寫死至 source code 內，然後透過 Arduno IDE 燒錄至 Caller module.
+      貼紙格式: "SSID: CMB<Caller ID>"
+
+  (7) 發貨前作業:
+      於後臺管理網頁，進行 Caller ID 與 Vender ID 的連結.
+      此第一版, 直接透過寫入資料庫來建立連結.
+      寄送 Caller 至商家。
+      
+  (8) 現場架設作業:
+      硬體、連接線、電源架設。
+      攤商準備一手機, 開啟 AP 功能, 並依據貼紙特定 SSID, 密碼為 88888888
+
+      
+3. Key components
+  (1) Caller module:
+    - 此為單晶片硬體 + Firmware/BSP + 執行於其上的應用程式
+    - 目前選用 ESP32 單晶片。支援 WiFi、藍芽，基本I/O等功能。內建 4KB Flash 與 ? RAM.
+    - 主要功能是監視數字顯示器內容(數字)，然後將內容(數字)傳遞給中央。
+    - 執行程式名稱: cmb-caller (source code: cmb-caller.ino)
+      
+  (2) Arduno IDE:
+    - 可將程式碼燒錄至 Caller module 的 flash 內。 
+    - 程式名稱: Arduno IDE
+
+  (3) 號碼接收 Service (Caller receiver service)(Caller frontend)
+    - 執行於雲端, 接受 Caller module 登入以及接收傳來訊息. 訊息內容主要為目前號碼回報.
+    - 使用 Websocket 或 Resetful (prefer) 建立連線.
+    - 程式名稱: cmb-caller-frontend  (source code: cmb-caller-frontend.py?)
+
+  (4) Caller connector API
+    - 一組 API 供 "號碼接收 service" 呼叫, 用來將目前叫號機資訊(數字) 傳遞給 CallMeBack 系統.
+    - API:
+      - ReceiveNum (CallerSys_ID, Caller_ID, current_number)
+        return OK? or FAIL?
+
+4. 連線方式
+  - 手機扮演 WiFi AP; Caller module 扮演 WiFi client device.
+  - 當 Caller module 啟動, 即會嘗試連線至指定 AP (SSID/Password 固定). 
+    如果失敗，會隔一段時間持續連線, 直到成功為止。
+
+
+5. 系統方塊圖
+  
+[Manufacturer]
+==================================================
+
+[Windows PC]
++------------------------+      +----------------+
+|Caller flash burning    |----->|Caller module   |
+|                        | USB  |                |
+|Arduno IDE              |      |(invalid/empty) |
++------------------------+      +----------------+
+
+
+[Vendor spot]                                          [Cloud / GCP]
+======================================                 =========================================
+                                                       [Cloud / Service]
++---------------+                                      +---------------------+ 
+|Caller module  |           +----------+               |Service              |    API of
+|               |-- Wifi -->| Wifi AP  |-- Internet -->|                     |--> CallMeBack sys
+|cmb-caller     |           +----------+               |cmb-caller-frontend  |
++---------------+           手機或專屬AP                 +---------------------+
+
+

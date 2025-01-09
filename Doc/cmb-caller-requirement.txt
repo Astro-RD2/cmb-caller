@@ -3,9 +3,9 @@
 
 1. 概述
   本專案目的是建立一泰偉自己的叫號機軟硬體系統。
-  目前先針對小型熱門攤販排隊等候需求為標的。未來將含括其他系統商例如免排的所有功能.
+  目前先以小型熱門攤販排隊等候需求為標的。未來將含括其他系統商例如免排的所有功能.
   
-  另外，夜市叫叫我系統附屬於叫叫我系統 (CallMeBack) 的一部分。 
+  另外，夜市叫叫我系統附屬於叫叫我系統 (CallMeBack)。 
   因兩系統初期階段關聯性少且開發性質略有不同 (前者包含硬體、低階控制)，故暫時分成兩個獨立的 Github 儲存庫 (repository).
   
 
@@ -57,16 +57,17 @@
       第二組地點 yyyyyyyy  SSID:yyyyy  Password:yyyyyy
       ...
     - 程式名稱: cmp-caller-setting-app?
-    - 內來還可透過此 App 來設定相關資訊, 例如營業時間等。 (Google Map 即可)
+    - 未來還可透過此 App 來設定相關資訊, 例如營業時間等。 (Google Map 即可)
+    - 未來此 App 還可以扮演 Keyboard 角色.
   (5) Caller management web
     - 包括網頁與相關資料庫。主要功能為提供 Caller 與 Vendor 連結管理 UI。
     - 狀態查詢。
     - Provided by CallMeBack system
-  (6) 號碼接收 Service 
+  (6) 號碼接收 Service (Caller receiver service)(Caller frontend)
     - 執行於雲端, 接受 Caller module 登入以及接收傳來的相關資訊. 資訊內容主要為目前號碼回報.
     - 使用 Websocket 或 Resetful (prefer) 建立連線.
-    - 程式名稱: cmb-caller-frontend?
-  (7) CallMeBack Caller API
+    - 程式名稱: cmb-caller-frontend or cmb-caller-receiver?
+  (7) Caller connector API
     - 一組 API 供 "號碼接收 service" 呼叫, 用來將目前叫號機資訊(數字) 傳遞給 CallMeBack 系統.
     - API:
       - ReceiveNum (Caller ID, current number)
@@ -178,7 +179,7 @@
 
 
 [Vendor spot]                                          [Cloud / GCP]
-======================================                 ==============
+======================================                 =========================================
                                                        [Cloud / Service]
 +---------------+                                      +---------------------+ 
 |Caller module  |           +----------+               |Service              |    API of

@@ -1,5 +1,6 @@
 夜市叫叫我系統設計
 --------------------------
+Version 1
 
 1. 概述
   本專案目的是建立一泰偉自己的叫號機軟硬體系統。
@@ -21,16 +22,17 @@
   (3) Caller ID: 每個 Caller module 會有一唯一 Caller ID, 格式為小寫英文以及數字混合共五碼, 但不包含母音 'aeiou' 和 數字 '4', 故總共 30 種不同的字元.
                  即每一碼都是 "012356789bcdfghjklmnpqrstvwxyz" 擇一，因為共 5 碼，故總共有 30*30*30*30*30=24,300,000 種 Caller ID. 
                  (?) 並希望排除全部相同字元的情況 (即至少要有兩種或以上不同的字元).
-  (4) Vendor (商家) 與 Vendor ID: Vendor 表示店家/攤販. 而每一 Vendor 會有一唯一 Vendor ID 用來於系統內識別是哪一個商家。
-  (5) 初始化流程: 於工廠內，對 caller (caller module) 進行設定 caller ID 的動作. 並貼上貼紙，
+  (4) Shop (商家) 與 Shop ID: Shop 表示店家/攤販. 而每一 Shop 會有一唯一 Shop ID 用來於系統內識別是哪一個商家。
+  (5) Vendor (叫號機系統商) 與 Vendor ID (叫號機系統商 ID): 由 CallMeBack 系統事先提供.
+  (6) 終端設備初始化流程: 於工廠內，對 caller (caller module) 進行設定 caller ID 的動作. 並貼上貼紙，
       Caller ID 格式: "SN: <CMB>-xxxxx" 貼於 caller 外殼。
-  (6) 發貨前作業:
+  (7) 發貨前作業:
       於後臺管理網頁，進行 Caller ID 與 Vender ID 的連結.
       寄送 Caller 至商家。
-  (7) 現場架設作業:
+  (8) 現場架設作業:
       硬體、連接線、電源架設。
       進入 "Caller module 設定模式" 進行相關參數設定。
-  (8) Caller module 設定作業:
+  (9) Caller module 設定作業:
       現場工程人員或商家，透過一特定 App 連接 Caller module，進行 Wifi 參數設定。
       此模式亦提供測試功能，回報狀態包括: 基本是否能連線到 internet, 以及是否能連線到 CallMeBack 中央。
       考慮攤販可能常移動, 可提供多組 Wifi profile 供選擇設定。
@@ -52,7 +54,7 @@
     - 與 Caller module 連線後，提供 UI, 可對 Caller module 進行相關設定。
     - 可顯示 Caller module 的 Caller ID 與 WiFi 參數. 如果採用 APP 方式, 可連線至 CallMeBack 系統查詢對應商家資訊.
     - 可設定 Caller module 的 WiFi 連線參數.
-    - 基於 Vendor 可能跑各處營運. 建議於本地端儲存多組 WiFi 參數 profile, 可快速選擇某組來設定至 Caller module.
+    - 基於 Shop 可能跑各處營運. 建議於本地端儲存多組 WiFi 參數 profile, 可快速選擇某組來設定至 Caller module.
       第一組地點 xxxxxxxx  SSID:xxxxx  Password:xxxxxx
       第二組地點 yyyyyyyy  SSID:yyyyy  Password:yyyyyy
       ...
@@ -60,7 +62,7 @@
     - 未來還可透過此 App 來設定相關資訊, 例如營業時間等。 (Google Map 即可)
     - 未來此 App 還可以扮演 Keyboard 角色.
   (5) Caller management web
-    - 包括網頁與相關資料庫。主要功能為提供 Caller 與 Vendor 連結管理 UI。
+    - 包括網頁與相關資料庫。主要功能為提供 Caller 與 Shop 連結管理 UI。
     - 狀態查詢。
     - Provided by CallMeBack system
   (6) 號碼接收 Service (Caller receiver service)(Caller frontend)
@@ -70,11 +72,18 @@
   (7) Caller connector API
     - 一組 API 供 "號碼接收 service" 呼叫, 用來將目前叫號機資訊(數字) 傳遞給 CallMeBack 系統.
     - API:
-      - ReceiveNum (Caller ID, current number)
-        return OK? or FAIL?
+      - 名稱/URL/...
+      參數格式:
+        {
+          "vendor_id": "tawe",              // 叫號機廠商 id (編碼規則：廠商名稱前兩字，各取漢語拼音的前兩個字母，例如：泰偉 tài wěi => tawe)
+          "caller_id": "2331-0",            // 叫號機 id
+          "call_num": 13,                   // 叫號機號碼 (無號碼則傳0，此是依照免排傳送方式) 
+          "change": true,                   // 號碼是否有變動 (true/false)
+          "last_update": 0,                 // 離線時間 0~10(分鐘)(大於10，則傳送10)
+        }
   (8) 其它輔助 API
-      - FetchVendorInfoByCallerID (Caller ID)
-        return OK with Vendor info, or FAIL?
+      - FetchShopInfoByCallerID (Caller ID)
+        return OK with Shop info, or FAIL?
 
 4. 相關流程
 4.1 Caller module 初始化流程: 
@@ -94,17 +103,17 @@
         透過 USB 連接 caller module 內的 caller-id-config module, 可讀取目前 Caller ID 以及設定新的 Caller ID.
         此程式的 UI 可顯示目前 Caller ID，以及一按鈕用來下令設定新 Caller ID 進 Caller module。
 
-4.2 Caller ID 與 Vendor ID 連結管理流程
+4.2 Caller ID 與 Shop ID 連結管理流程
   (1) 營運商操作人員透過瀏覽器連接一後臺管理程式 (web)，進行此流程。
   (2) 考慮: 是否需要有一 table 維護 Caller (caller_id*)
   (3) 功能: 
-    - 建立 Caller ID 與 Vendor ID 連結關係。目前定義一個 Caller ID 只能與一個 Vendor ID 建立連結，反之亦然。
-      如果該 Caller ID 已經連結其它 Vendor，或欲連結進之 Vendor 已經捆綁其它 Caller ID，需要警告並進行相關處置。
+    - 建立 Caller ID 與 Shop ID 連結關係。目前定義一個 Caller ID 只能與一個 Shop ID 建立連結，反之亦然。
+      如果該 Caller ID 已經連結其它 Shop，或欲連結進之 Shop 已經捆綁其它 Caller ID，需要警告並進行相關處置。
       (todo) 處置方式。
-    - 解除 Caller ID 與 Vendor ID 的連結關係。
-    - 相關查詢: 自 Caller ID，查詢所連結 Vendor (ID)
-                 自 Vendor ID/Name/Tel等, 查詢所連結 Caller (ID)
-  (4) API參考: 透過 Caller ID查詢所連結之 Vendor 相關資訊.提供 "設定 App" 進行查詢。
+    - 解除 Caller ID 與 Shop ID 的連結關係。
+    - 相關查詢: 自 Caller ID，查詢所連結 Shop (ID)
+                 自 Shop ID/Name/Tel等, 查詢所連結 Caller (ID)
+  (4) API參考: 透過 Caller ID查詢所連結之 Shop 相關資訊.提供 "設定 App" 進行查詢。
 
 4.3 現場建置/設定流程
   (1) Caller 硬體、接線、電源之架設。
@@ -155,14 +164,16 @@
   
 [Manufacturer]
 ==================================================
-
+燒綠
 [Windows PC]
 +------------------------+      +----------------+
 |Caller flash burning    |----->|Caller module   |
 |                        | USB  |                |
-|cmb-caller-burner       |      |(invalid/empty) |
-+------------------------+      +----------------+
+|Arduno IDE              |      |(invalid/empty) |
++cmb-caller.ino          +      +----------------+
++------------------------+
 
+設定 Caller ID
 [Windows PC]
 +------------------------+      +---------------+
 |Caller ID generator     |----->|Caller module  |
@@ -170,6 +181,7 @@
 |cmb-caller-id-generator |      |cmb-caller     |
 +------------------------+      +---------------+
 
+管理 Caller 與 Shop 連結
 [Web browser]        [Cloud / Service]
 +-------------+      +-----------------------+
 |Browser      |----->|Caller Management web  |
@@ -177,15 +189,15 @@
 |             |      |/caller-report?        |
 +-------------+      +-----------------------+
 
-
-[Vendor spot]                                          [Cloud / GCP]
+營運
+[Shop spot]                                            [Cloud / GCP]
 ======================================                 =========================================
-                                                       [Cloud / Service]
-+---------------+                                      +---------------------+ 
-|Caller module  |           +----------+               |Service              |    API of
-|               |-- Wifi -->| Wifi AP  |-- Internet -->|                     |--> CallMeBack sys
-|cmb-caller     |           +----------+               |cmb-caller-frontend  |
-+---------------+                                      +---------------------+
+                                                       [Vendor system]               [Callmeback system]
++---------------+                                      +------------------------+ 
+|Caller module  |           +----------+               |Caller frontend service |    API of
+|               |-- Wifi -->| Wifi AP  |-- Internet -->|                        |--> CallMeBack sys
+|cmb-caller     |           +----------+               |cmb-caller-frontend     |
++---------------+           手機或專屬 AP                +------------------------+
     ^
     |
     |WiFi direct (Setting SSID) or

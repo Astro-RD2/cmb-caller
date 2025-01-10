@@ -57,7 +57,7 @@ Version 1.1
 
   (3) 號碼接收 Service (Caller frontend)
     - 執行於雲端, 接受 Caller module 登入以及接收傳來的訊息. 訊息內容主要為目前號碼.
-    - 使用 Websocket 或 Resful (prefer) 建立連線.
+    - 使用 Websocket 或 Restful (prefer) 建立連線.
     - 程式名稱: cmb-caller-frontend  (source code: cmb-caller-frontend.py?)
 
   (4) Caller connector API
@@ -76,7 +76,7 @@ Version 1.1
 
 4. 連線方式
   - 手機扮演 WiFi AP; Caller module 扮演 WiFi client device.
-  - SSID 即 CMB<CallerID>, Password 即 88888888
+  - SSID 即 CMB<CallerID>, 此可參考叫號機外部貼紙; Password 即 88888888
     所以 WiFi AP 需要事先設定成上述 SSID
   - 當 Caller module 啟動, 即會嘗試連線至指定 AP. 如果失敗，會隔一段時間持續發動連線, 直到成功為止。
 

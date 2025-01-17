@@ -102,7 +102,7 @@ Version 1.1
 |Caller module  |           +----------+               |Caller frontend service |    API of
 |               |-- Wifi -->| Wifi AP  |-- Internet -->|                        |--> CallMeBack sys
 |cmb-caller     |           +----------+               |cmb-caller-frontend     |
-+---------------+           手機或專屬 AP                +------------------------+
-
++---------------+           Dedicated AP               +------------------------+
+                            or smart form
 
 <End of Document>

@@ -25,7 +25,7 @@ Version 1.1
                  且對應之目標 WiFi AP 參數:
                      SSID: CMB<Caller ID>
                      密碼: 88888888
-                 注意! ID 第一碼為 'z' 將被視為內部使用，不對外釋放.
+                 注意! 定義 Caller ID 第一碼若為 'z', 將被視為內部使用，不對外釋放. 例如: z0001, z0f3b
 
   (4) Shop (商家) 與 Shop ID: Shop 表示店家/攤販. 而每一 Shop 會有一唯一 Shop ID 用來於系統內識別是哪一個商家。
   

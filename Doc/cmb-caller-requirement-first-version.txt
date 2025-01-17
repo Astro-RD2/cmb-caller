@@ -18,6 +18,10 @@ Version 1.1
               ^             |失敗, 持續 retry
               |             |
               +-------------+
+      細節:
+         如果快閃, 表示正在連線 Wifi 中.
+         如果慢閃, 表示已經連線到 Wifi, 但正在透過 Websocket 連線到中央.
+         如果 Websocket 連線成功, 則燈號關閉.
 
   (3) Caller ID: 每個 Caller module 會有一唯一 Caller ID, 格式為小寫英文以及數字混合共五碼, 但不包含母音 'aeiou' 和 數字 '4', 故總共 30 種不同的字元.
                  即每一碼都是 "012356789bcdfghjklmnpqrstvwxyz" 擇一，因為共 5 碼，故總共有 30*30*30*30*30=24,300,000 種 Caller ID. 

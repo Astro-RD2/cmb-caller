@@ -22,6 +22,7 @@ Version 1
   (3) Caller ID: 每個 Caller module 會有一唯一 Caller ID, 格式為小寫英文以及數字混合共五碼, 但不包含母音 'aeiou' 和 數字 '4', 故總共 30 種不同的字元.
                  即每一碼都是 "012356789bcdfghjklmnpqrstvwxyz" 擇一，因為共 5 碼，故總共有 30*30*30*30*30=24,300,000 種 Caller ID. 
                  (?) 並希望排除全部相同字元的情況 (即至少要有兩種或以上不同的字元).
+                注意! 定義 Caller ID 第一碼若為 'z', 將被視為內部使用，不對外釋放. 例如: z0001, z0f3b
   (4) Shop (商家) 與 Shop ID: Shop 表示店家/攤販. 而每一 Shop 會有一唯一 Shop ID 用來於系統內識別是哪一個商家。
   (5) Vendor (叫號機系統商) 與 Vendor ID (叫號機系統商 ID): 由 CallMeBack 系統事先提供.
   (6) 終端設備初始化流程: 於工廠內，對 caller (caller module) 進行設定 caller ID 的動作. 並貼上貼紙，

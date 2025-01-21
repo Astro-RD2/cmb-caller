@@ -72,6 +72,6 @@ require('dotenv').config();
         .toFile(outputPath);
     }
   }
-  console.log('\n<<<<  Qrcode 立牌 已列印完成...  >>>>\n');
-})();
 
+})();
+console.log('\n<<<<  Qrcode 立牌 已列印完成...  >>>>\n');

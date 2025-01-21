@@ -45,14 +45,13 @@ require('dotenv').config();
           light: '#ffffff'
         }
       }, (err) => {
-        if (err) { reject(err); }
-        else { resolve(); }
+        // eslint-disable-next-line curly
+        if (err) reject(err);
+        // eslint-disable-next-line curly
+        else resolve();
       });
     });
-
-
-    console.log('\n<<<<  Qrcode A4 已列印完成...  >>>>\n');
   }
-
+  console.log('\n<<<<  Qrcode A4 已列印完成...  >>>>\n');
 })();
 

@@ -30,13 +30,15 @@ require('dotenv').config();
             light: '#ffffff'
           }
         }, (err) => {
-          if (err) reject(err);
-          else resolve();
+          if (err) { reject(err); }
+          else { resolve(); }
         });
       });
 
-      console.log('\n<<<<  Qrcode 立牌 已列印完成...  >>>>\n');
+
     }
+
   }
+  console.log('\n<<<<  Qrcode 立牌 已列印完成...  >>>>\n');
 })();
 

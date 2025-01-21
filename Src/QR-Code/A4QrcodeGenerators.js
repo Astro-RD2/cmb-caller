@@ -107,6 +107,7 @@ require('dotenv').config();
       .composite([{ input: Buffer.from(text), left: 0, top: 0 }])
       .toFile(outputPath);
   }
-  console.log('\n<<<<  Qrcode A4 已列印完成...  >>>>\n');
+
 })();
+console.log('\n<<<<  Qrcode A4 已列印完成...  >>>>\n');
 

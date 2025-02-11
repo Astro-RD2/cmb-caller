@@ -1,5 +1,5 @@
-char Caller_Number[] = "z0001";
-// char Caller_Number[] = "z0002";
+// char Caller_Number[] = "z0001";
+char Caller_Number[] = "z0002";
 
 #include <ArduinoWebsockets.h>
 #include <Arduino.h>
@@ -17,8 +17,10 @@ char Caller_Number[] = "z0001";
 #define LED_1e 16
 #define LED_2e 4
 #define LED_3e 15
+
 #define RLED 33
-#define BLED 2
+#define GLED 32
+// #define BLED 2
 
 #define LLH 500
 
@@ -49,17 +51,17 @@ const char* websockets_server_host = "35.187.148.66";
 const uint16_t websockets_server_port = 8765;
 
 // 計時器和網路相關
-const long WIFI_TIMEOUT = 7000;          // WiFi 連接超時時間 (10000)
-const long WS_TIMEOUT = 5000;            // WebSocket 連接超時時間 (5000)
-const long STATE_UPDATE_INTERVAL = 500;  // 狀態更新間隔 (500)
-const long HEARTBEAT_INTERVAL = 30000;   // 心跳間隔 (3000)
+const long WIFI_TIMEOUT = 10000;          // WiFi 連接超時時間 (10000)
+const long WS_TIMEOUT = 5000;             // WebSocket 連接超時時間 (5000)
+const long STATE_UPDATE_INTERVAL = 500;   // 狀態更新間隔 (500)
+const long PING_INTERVAL = 30000;         // Ping 間隔 (30000)
 
 // Caller 相關定義
 const char Caller_Prefix[] = "CMB";
 char Caller_SSID[sizeof(Caller_Prefix) + sizeof(Caller_Number) - 1];
 
 // 系統變數
-unsigned long lastHeartbeat = 0;
+unsigned long lastPING = 0;
 unsigned long delayStart = 0;
 unsigned long ma_500ms_counter = 0;
 byte led_light_en = 0;
@@ -91,28 +93,29 @@ void updateSystemState(SystemState newState, const String& error = "") {
   // 更新 LED 狀態
   switch (newState) {
     case STATE_INIT:
-      digitalWrite(RLED, HIGH);  // 紅燈亮
-      digitalWrite(BLED, LOW);   // 綠燈滅
+      digitalWrite(RLED, LOW);   // 紅燈亮
+      digitalWrite(GLED, HIGH);  // 綠燈滅
       break;
     case STATE_WIFI_CONNECTING:
       digitalWrite(RLED, !digitalRead(RLED));  // 快速閃爍
-      digitalWrite(BLED, !digitalRead(BLED));  // 快速閃爍
+      digitalWrite(GLED, HIGH);                // 綠燈滅
       break;
     case STATE_WIFI_CONNECTED:
-      digitalWrite(RLED, LOW);   // 紅燈滅
-      digitalWrite(BLED, HIGH);  // 綠燈亮
+      digitalWrite(RLED, LOW);   // 紅燈亮
+      digitalWrite(GLED, HIGH);  // 綠燈滅
       break;
     case STATE_WEBSOCKET_CONNECTING:
       digitalWrite(RLED, !digitalRead(RLED));  // 慢速閃爍
-      digitalWrite(BLED, !digitalRead(BLED));  // 慢速閃爍
+      digitalWrite(RLED, !digitalRead(GLED));  // 慢速閃爍
+      // digitalWrite(GLED, HIGH);   // 綠燈滅
       break;
     case STATE_WEBSOCKET_CONNECTED:
-      digitalWrite(RLED, LOW);   // 紅燈滅
-      digitalWrite(BLED, HIGH);  // 綠燈亮
+      digitalWrite(RLED, HIGH);  // 紅燈滅
+      digitalWrite(GLED, LOW);   // 綠燈亮
       break;
-    case STATE_ERROR: // 不變動LED，以免影響其它狀態顯示.
-      // digitalWrite(RLED, HIGH);  // 紅燈亮 
-      // digitalWrite(BLED, LOW);   // 綠燈滅
+    case STATE_ERROR:  // 不變動LED，以免影響其它狀態顯示.
+      // digitalWrite(RLED, HIGH);  // 紅燈亮
+      // digitalWrite(GLED, LOW);   // 綠燈滅
       break;
   }
 }
@@ -160,10 +163,10 @@ int convertToNumber() {
 // WiFi 連接函數
 bool connectToWiFi(const char* ssid, const char* pwd) {
   updateSystemState(STATE_WIFI_CONNECTING);
-  status.currentSSID = ssid;
-
-  WiFi.begin(ssid, pwd);
   Serial.printf("Connecting to WiFi: %s\n", ssid);
+
+  status.currentSSID = ssid;
+  WiFi.begin(ssid, pwd);
 
   unsigned long startTime = millis();
   while (WiFi.status() != WL_CONNECTED) {
@@ -185,6 +188,7 @@ bool connectToWiFi(const char* ssid, const char* pwd) {
 // WebSocket 連接函數
 bool connectToWebSocket() {
   updateSystemState(STATE_WEBSOCKET_CONNECTING);
+  Serial.printf("Connecting to WebSocket server\n");
 
   bool connected = client.connect(websockets_server_host, websockets_server_port, "/");
   if (connected) {
@@ -205,6 +209,7 @@ void IRAM_ATTR handleInterrupt() {
   const int enablePins[3] = { LED_1e, LED_2e, LED_3e };
   int* numbers[3] = { &n1, &n2, &n3 };
 
+  // Serial.print("h");
   for (int i = 0; i < 3; ++i) {
     int state = digitalRead(enablePins[i]);
     if (state == 1 && fe[i] == 0) {
@@ -252,7 +257,7 @@ void sendCallerNumber() {
 // 檢查連接狀態
 void checkConnections() {
   // 檢查 WiFi 連接
-  Serial.print("_");
+  // Serial.print("_");
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("WiFi.status() != WL_CONNECTED");
     if (status.state != STATE_WIFI_CONNECTING) {
@@ -274,9 +279,9 @@ void checkConnections() {
   }
 
   // 發送心跳
-  if (millis() - lastHeartbeat > HEARTBEAT_INTERVAL) {
+  if (millis() - lastPING > PING_INTERVAL) {
     client.send("ping");
-    lastHeartbeat = millis();
+    lastPING = millis();
   }
 
   client.poll();
@@ -287,6 +292,7 @@ void setup() {
   Serial.begin(115200);
   delay(100);
   Serial.println("\n\n----------------------------------\n");
+  Serial.printf("Caller Number %s.\n", Caller_Number);
   updateSystemState(STATE_INIT);
 
   // 初始化 Caller_SSID
@@ -297,7 +303,8 @@ void setup() {
 
   // IO 初始化
   pinMode(RLED, OUTPUT);
-  pinMode(BLED, OUTPUT);
+  pinMode(GLED, OUTPUT);
+  // pinMode(BLED, OUTPUT);
   const int inputs[] = { LED_a, LED_b, LED_c, LED_d, LED_e, LED_f, LED_g,
                          LED_1e, LED_2e, LED_3e, 0 };
   for (int pin : inputs) {

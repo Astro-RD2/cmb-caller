@@ -60,6 +60,8 @@ Version 1.1
     - 目前選用 ESP32 單晶片。支援 WiFi、藍芽，基本I/O等功能。內建 4KB Flash 與 ? RAM.
     - 主要功能是監視數字顯示器內容(數字)，然後將內容(數字)傳遞給中央。
     - 運行程式名稱: cmb-caller (source code: cmb-caller.ino)
+    - 連線標的: ws://cmb-front-end.callmeback.com.tw:8765
+      此 DNS 由泰偉電子維護於 Wix 網站.
       
   (2) Arduno IDE:
     - 透過 USB 與 Caller module 連接, 可將編譯後的程式碼 (cmb-caller.ino) 燒錄至 Caller module 的 flash 內。 

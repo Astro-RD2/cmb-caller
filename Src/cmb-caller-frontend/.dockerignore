@@ -1,0 +1,32 @@
+
+# Python 暫存檔案
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 虛擬環境
+env/
+venv/
+.Python
+
+# 環境變數與設定
+.env
+
+# 日誌與暫存檔
+*.log
+*.tmp
+*.bak
+*.swp
+
+# 測試與模擬檔案
+ws_client*
+fake*
+*複製*
+*2025*
+
+# 編輯器與文件
+.vscode/
+.idea/
+*.ipynb
+*.md

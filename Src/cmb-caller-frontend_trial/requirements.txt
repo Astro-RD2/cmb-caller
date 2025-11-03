@@ -1,0 +1,14 @@
+#pytz
+
+requests
+asyncio
+websockets==13.1
+nest_asyncio
+google-auth
+flask
+
+google-cloud-pubsub
+line-bot-sdk
+line-bot-sdk
+psutil
+

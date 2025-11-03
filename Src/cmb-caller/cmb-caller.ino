@@ -1,17 +1,26 @@
-// 修改紀錄
 /*
  * 修改紀錄:
- * 2025-xx-xx: Roy Ching  初始版本
+ * 2025-xx-xx: Roy Ching  初始版本.
  * 2025-03-11: Roy Ching  增加資料BUFFER.
  * 2025-03-12: Roy Ching  加強斷線斷訊重傳功能.
  * 2025-03-12: Roy Ching  Webscok重連時傳送系統資訊.
  * 2025-03-13: Roy Ching  程式重整.
  * 2025-03-14: Roy Ching  GCE IP 改用DNS轉址.
- * 2025-03-24: Roy Ching  Websocket LIB 由 <ArduinoWebsockets.h>  改為用  <WebSocketsClient.h> (For GCR)
- * 2025-03-24: Roy Ching  支援 GCE 或 GCR
- * 2025-03-24: Roy Ching  可支援直接使用鍵盤訊號訊號
- * 2025-03-26: Roy Ching  只支援 H/W Ver.2.0 
+ * 2025-03-24: Roy Ching  Websocket LIB 由 <ArduinoWebsockets.h>  改為用  <WebSocketsClient.h> (For GCR).
+ * 2025-03-24: Roy Ching  支援 GCE 或 GCR.
+ * 2025-03-24: Roy Ching  可支援直接使用鍵盤訊號訊號.
+ * 2025-03-26: Roy Ching  只支援 H/W Ver.2.0.
+ * 2025-03-27: Roy Ching  顯示 scan 資訊.
+ * 2025-03-27: Roy Ching  convertToNumber delay 50 us.
+ * 2025-03-28: Roy Ching  增加藍色LED(版上)與紅色LED(外加)反向顯示.
+ * 2025-03-28: Roy Ching  支援 H/W Ver.2.0 & H/W Ver.1.0.
+ * 2025-03-31: Roy Ching  移除 "支援直接使用鍵盤訊號訊號" 功能.
+ * 2025-03-31: Roy Ching  硬體錯誤顯示紅燈.
+ * 2025-04-07: Roy Ching  修正 1000000 歸零問題當機問題.
+ * 2025-04-16: Roy Ching  加入 'auth' 及 'info' 通訊支援.
  */
+
+#define VERSION "20250416"
 
 // 引入必要的函式庫
 #include <WebSocketsClient.h>    // 用於 WebSocket 通訊
@@ -30,7 +39,7 @@
 #include "credentials.h"
 
 // 程式版本資訊
-String Version = "20250326";  // 當前韌體版本
+String Version = VERSION;  // 當前韌體版本
 
 // 宣告外部函數（用於獲取任務運行時間統計）
 extern void vTaskGetRunTimeStats(char* pcWriteBuffer);
@@ -38,10 +47,6 @@ extern void vTaskGetRunTimeStats(char* pcWriteBuffer);
 // 呼叫號碼（用於識別設備）
 String Caller_Number = "00000";  // 會變
 
-#ifdef USE_KEYBOARD_SIGNAL
-#define BLED 2
-#define SRV_P34 34
-#else
 // LED 腳位定義
 #define LED_a 17
 #define LED_b 5
@@ -53,9 +58,10 @@ String Caller_Number = "00000";  // 會變
 #define LED_1e 16
 #define LED_2e 4
 #define LED_3e 15
-#endif
+
 #define LED_RED 33    // 紅色 LED
-#define LED_GREEN 32  // 綠色 LED
+#define LED_GREEN 32  // 綠色 LEDSCAN_NUM
+#define LED_BLUE 2    // 藍色 LED
 
 // 計時器和網路相關設定
 const long WIFI_TIMEOUT = 7000;           // WiFi 連接超時時間（7 秒）
@@ -65,7 +71,7 @@ const long PING_INTERVAL = 30000;         // Ping 間隔（30 秒）
 const long ON_MESSAGE_TIMEOUT = 10000;    // onMessage 超時時間（10 秒）
 const long printInterval = (10 * 60000);  // 系統訊息列印間隔（10 分鐘）
 const long CHECK_DISPLAY_INTERVAL = 100;  // 中斷取樣間隔（100 毫秒）
-const long SCAN_NUM = 3;                  // 中斷取樣次數
+const long SCAN_NUM = 3;                  // 中斷取樣次數, 2025/03/28, 6->3
 const long CHECK_NUMBER_INTERVAL = 50;    // 數值變動取樣間隔（50 毫秒）
 
 // 系統變數
@@ -139,6 +145,7 @@ enum SystemState {
   STATE_ERROR,                 // 錯誤狀態
   STATE_DEMO,                  // Demo 模式
   STATE_TRANS,                 // 傳輸狀態
+  STATE_NUMBER_ERROR,          // 數字掃描硬體錯誤
   STATE_COUNT                  // 狀態總數
 };
 
@@ -207,8 +214,8 @@ volatile bool NullId = false;  // 空 ID 標記
 
 // 開機時間與失效時間
 unsigned long startTime = 0;                           // 開機時間
-const unsigned long expireMinutes = 5;                 // 失效時間（5 分鐘）
-unsigned long expireTime = expireMinutes * 60 * 1000;  // 失效時間（毫秒）
+const unsigned long expireMinutes = 10;                // Maint_mode 失效時間（10 分鐘）
+unsigned long expireTime = expireMinutes * 60 * 1000;  // Maint_mode 失效時間（毫秒）
 
 
 // 資料緩衝區設定
@@ -271,11 +278,11 @@ void updateSystemState(SystemState newState, const String& error = "");
 bool connectToWiFi(const char* ssid_in, const char* password_in);
 void scanDisplayDigits();
 
-void IRAM_ATTR isr_handler();
+// void IRAM_ATTR isr_handler();
 void IRAM_ATTR handleInterrupt();
 void IRAM_ATTR sendCallerNumber(unsigned long currentMillis);
 
-bool vApplicationIdleHook(void);
+// bool vApplicationIdleHook(void);
 void initLedConfigs();
 void updateLEDState();
 void blinkLED(TimerHandle_t xTimer);
@@ -335,6 +342,7 @@ void setup() {
     savedData2 = "88888888";
     preferences.begin("storage", false);
     preferences.putString("saved_data1", savedData1);
+    preferences.putString("saved_data2", savedData2);
     preferences.end();
     handleRetrieve();
   }
@@ -342,7 +350,7 @@ void setup() {
     NullId = true;
   }
   Caller_Number = savedData1;
-  Serial.printf("cmb_caller Ver:%s, Caller Number %s.\n", Version.c_str(), Caller_Number);
+  Serial.printf("cmb_caller Ver:%s, Caller Number %s.\n\n", Version.c_str(), Caller_Number);
 
   // 初始化 Caller_SSID
   strcpy(Caller_SSID, Caller_Prefix);
@@ -352,6 +360,7 @@ void setup() {
 
   // 初始化 LED 與按鈕
   pinMode(LED_RED, OUTPUT);
+  pinMode(LED_BLUE, OUTPUT);
   pinMode(LED_GREEN, OUTPUT);
   initLedConfigs();
 
@@ -363,26 +372,19 @@ void setup() {
 
   updateSystemState(STATE_INIT);
 
-#ifdef USE_KEYBOARD_SIGNAL
-  pinMode(BLED, OUTPUT);
-  pinMode(SRV_P34, INPUT);
-  pinMode(BUTTON_PIN, INPUT);
-  attachInterrupt(digitalPinToInterrupt(SRV_P34), isr_handler, RISING);
-#else
   // 初始化中斷與計時器
   const int inputs[] = { LED_a, LED_b, LED_c, LED_d, LED_e, LED_f, LED_g, LED_1e, LED_2e, LED_3e, BUTTON_PIN };
   for (int pin : inputs) {
     pinMode(pin, INPUT);
-    Serial.printf("SET_Inmpt(%d) ", pin);
+    // Serial.printf("SET_Inmpt(%d) ", pin);
   }
-  timer0 = timerBegin(1000000);         // 1MHz
-  timerAlarm(timer0, 500000, true, 0);  // 500ms
-  timerAttachInterrupt(timer0, &handleInterrupt);
+  // timer0 = timerBegin(1000000);                    // 1MHz
+  // timerAlarm(timer0, 500000, true, 0);             // 500ms
+  // timerAttachInterrupt(timer0, &handleInterrupt);  // !!!@@@
   // 設置外部中斷
   attachInterrupt(digitalPinToInterrupt(LED_1e), handleInterrupt, RISING);
   attachInterrupt(digitalPinToInterrupt(LED_2e), handleInterrupt, RISING);
   attachInterrupt(digitalPinToInterrupt(LED_3e), handleInterrupt, RISING);
-#endif
 
   // 初始化 WiFi
   WiFi.mode(WIFI_STA);
@@ -424,6 +426,7 @@ void setup() {
   setup_finish = true;
 }
 
+int lastscanDisplayCount = 0;
 // 主循環
 void loop() {
   static unsigned long lastCheck = 0;
@@ -432,16 +435,15 @@ void loop() {
   server.handleClient();
   ArduinoOTA.handle();
 
-#ifdef USE_KEYBOARD_SIGNAL
-  ma_1ms_timer2();
-  ma_1ms_timer();
-  ma_led_500ms();
-
-// sNum=String(le_ok_number);
-#else
-
-#endif
   currentMillis = millis();
+  if (currentMillis % (1 * 1000) == 0) {                  // 每一秒
+    if ((scanDisplayCount - lastscanDisplayCount) < 5) {  // 硬體錯誤，標準 30
+      Serial.printf(" Ix(%d) ", scanDisplayCount - lastscanDisplayCount);
+      updateSystemState(STATE_NUMBER_ERROR);
+    }
+    lastscanDisplayCount = scanDisplayCount;
+  }
+
   sendCallerNumber(currentMillis);
 
   if (currentMillis - lastCheck >= STATE_UPDATE_INTERVAL) {
@@ -489,223 +491,27 @@ void loop() {
   // vTaskDelay(pdMS_TO_TICKS(1));  // !!!@@@
 }
 
-#ifdef USE_KEYBOARD_SIGNAL
-
-// 定義常數
-const int SIGNAL_LENGTH = 25;              // 訊號總長度
-const int MAX_BATCH_COUNT = 30;            // 最大訊號批次數
-const int DEBOUNCE_DELAY_MICROS = 500;     // 去抖動延遲時間（微秒）, >300us ~ <900us
-const String VALID_HEADER = "000";         // 正確的頭部值
-const String VALID_FOOTER = "0010000000";  // 正確的尾部值
-const int DATA_START_INDEX = 10;           // 資料部分的起始索引
-const int DATA_END_INDEX = 20;             // 資料部分的結束索引
-const int LLH = 500;                       // 資料清除時間
-
-// 狀態變數
-volatile int currentSignalIndex = 0;                                    // 當前訊號的索引
-volatile int currentBatchIndex = 0;                                     // 當前批次的索引
-volatile bool isProcessingSignal = false;                               // 訊號處理狀態
-volatile int signalBuffer[MAX_BATCH_COUNT][SIGNAL_LENGTH + 5] = { 0 };  // 訊號緩衝區
-
-unsigned long delayStart = 0;                 // 延遲開始時間
-unsigned long signalProcessingStartTime = 0;  // 延遲開始時間
-unsigned long last500msTick = 0;              // 500 毫秒計數器
-unsigned long last100msTick = 0;              // 100 毫秒計數器
-bool isLedOn = false;                         // LED 開關狀態
-
-int decodedNumber = 0;        // 解碼後的數值
-int stableSignalCounter = 0;  // 穩定計數器
-String previousSignal = "";   // 上一次的訊號
-String decodedId = "";        // 解碼後的 ID
-
-// 中斷處理函數
-void IRAM_ATTR isr_handler() {
-  // 去抖動延遲
-  delayMicroseconds(DEBOUNCE_DELAY_MICROS);
-  // 讀取訊號值
-  int signalValue = digitalRead(SRV_P34);
-  // Serial.printf("[ISR] Signal Value: %d\n", signalValue);  // 除錯資訊
-  // 如果訊號處理未開始，則開始處理
-  if (!isProcessingSignal) {
-    // 將訊號值存入緩衝區
-    signalBuffer[currentBatchIndex][currentSignalIndex] = signalValue;
-    currentSignalIndex++;
-    // Serial.printf("[ISR] Signal Index: %d, Value: %d\n", currentSignalIndex, signalValue);  // 除錯資訊
-    // 如果達到訊號長度，開始處理訊號
-    if (currentSignalIndex >= SIGNAL_LENGTH) {
-      isProcessingSignal = true;
-      signalProcessingStartTime = millis();
-      digitalWrite(BLED, LOW);
-      isLedOn = false;
-      // Serial.println("[ISR] Signal Processing Started");  // 除錯資訊
-    }
-    // 重置 500 毫秒計數器
-    last500msTick = 0;
-  }
-  sendCallerNumber(millis());  // 持續監測數字變化
-}
-
-// 訊號處理函數
-void processSignal() {
-  String currentSignal = "";
-  String currentHeader = "";
-  String currentId = "";
-  String currentFooter = "";
-
-  for (int i = 0; i < (SIGNAL_LENGTH + 5); i++) {
-    currentSignal += String(signalBuffer[currentBatchIndex][i]);
-    if (i <= 2) {
-      currentHeader += String(signalBuffer[currentBatchIndex][i]);
-    } else if (i >= 3 && i < 10) {
-      currentId += String(signalBuffer[currentBatchIndex][i]);
-    } else if (i >= 20) {
-      currentFooter += String(signalBuffer[currentBatchIndex][i]);
-    }
-  }
-  // Serial.printf("[ProcessSignal] Signal: %s, Header: %s, Footer: %s\n", currentSignal.c_str(), currentHeader.c_str(), currentFooter.c_str());  // 除錯資訊
-  // 驗證頭部和尾部
-  if (currentHeader != VALID_HEADER || currentFooter != VALID_FOOTER) {
-    Serial.println("[ProcessSignal] Header or Footer Mismatch, Resetting State");  // 除錯資訊
-    printDecodedResult(currentSignal, currentHeader, currentFooter, decodedNumber, decodedId);
-    resetState();
-    return;
-  }
-  // 檢查訊號是否穩定
-  if (currentSignal != previousSignal) {
-    previousSignal = currentSignal;
-    stableSignalCounter = 0;
-    Serial.println("[ProcessSignal] Signal Changed, Resetting Stability Counter");  // 除錯資訊
-    // printDecodedResult(currentSignal, currentHeader, currentFooter, decodedNumber, decodedId);
-  } else {
-    stableSignalCounter++;
-    // Serial.printf("[ProcessSignal] Signal Stable, Counter: %d\n", stableSignalCounter);  // 除錯資訊
-    // printDecodedResult(currentSignal, currentHeader, currentFooter, decodedNumber, decodedId);
-  }
-  // 如果訊號穩定，解碼資料部分
-  if (stableSignalCounter == (MAX_BATCH_COUNT - 1)) {
-    stableSignalCounter = 0;
-    decodedNumber = 0;
-    for (int i = DATA_START_INDEX; i < DATA_END_INDEX; i++) {
-      decodedNumber <<= 1;
-      if (signalBuffer[currentBatchIndex][i] == 1) {
-        decodedNumber |= 1;
-      }
-    }
-    decodedId = currentId;
-    nowStr = String(decodedNumber);
-    // Serial.println("[ProcessSignal] Decoding Complete, Printing Result");  // 除錯資訊
-    printDecodedResult(currentSignal, currentHeader, currentFooter, decodedNumber, decodedId);
-  }
-  // 更新批次索引
-  currentBatchIndex++;
-  if (currentBatchIndex >= MAX_BATCH_COUNT) {
-    // Serial.println("[ProcessSignal] Batch Index Overflow, Resetting State");  // 除錯資訊
-    resetState();
-  }
-}
-
-// 重置狀態函數
-void resetState() {
-  currentSignalIndex = 0;
-  currentBatchIndex = 0;
-  isProcessingSignal = false;
-  stableSignalCounter = 0;
-  previousSignal = "";
-  decodedNumber = 0;
-  decodedId = "";
-  // Serial.println("[ResetState] State Reset");  // 除錯資訊
-}
-
-// 輸出解碼結果函數
-void printDecodedResult(String signal, String header, String footer, int number, String id) {
-  // Serial.println("Decoded Result:");
-  Serial.printf("Number: %d\n", number);
-  // Serial.printf("Signal: %s\n", signal.c_str());
-  // Serial.printf("Header: %s\n", header.c_str());
-  // Serial.printf("Footer: %s\n", footer.c_str());
-  // Serial.printf("ID: %s\n", id.c_str());
-  // Serial.println("-----------------------------");
-}
-
-void ma_1ms_timer2() {
-  if ((millis() - signalProcessingStartTime) >= 1) {
-    signalProcessingStartTime = millis();
-    if (isProcessingSignal) {
-      int signalValue = digitalRead(SRV_P34);
-      signalBuffer[currentBatchIndex][currentSignalIndex] = signalValue;  // 應為0 (28-25=3個)
-      currentSignalIndex++;
-      // Serial.printf("[Timer2] Signal Index: %d, Value: %d\n", currentSignalIndex, signalValue);  // 除錯資訊
-      if (currentSignalIndex >= (SIGNAL_LENGTH + 3)) {
-        isProcessingSignal = false;
-        currentSignalIndex = 0;
-        processSignal();
-        // Serial.println("[Timer2] Signal Processing Completed");  // 除錯資訊
-      }
-    }
-  }
-}
-
-void ma_1ms_timer() {
-  if ((millis() - delayStart) >= 1) {
-    delayStart = millis();
-    last500msTick++;
-    last100msTick++;
-    // Serial.printf("[Timer] 500ms Counter: %d, 100ms Counter: %d\n", last500msTick, last100msTick);  // 除錯資訊
-  }
-}
-
-void ma_led_500ms() {
-  if (last500msTick > LLH) {
-    last500msTick = 0;
-    isLedOn = !isLedOn;
-    digitalWrite(BLED, isLedOn ? HIGH : LOW);
-    resetState();
-    // Serial.printf("[LED] LED State: %d\n", isLedOn);  // 除錯資訊
-  }
-}
-
-// 數字發送函數
-void IRAM_ATTR sendCallerNumber(unsigned long currentMillis) {
-  if (currentMillis - lastCheckNumber < CHECK_NUMBER_INTERVAL)
-    return;
-  lastCheckNumber = currentMillis;
-
-  // nowStr = decodedNumber;
-  // Serial.printf("X.");                                                             // 除錯資訊
-  // Serial.printf("nowStr=%s\n", nowStr.c_str());  // 除錯資訊
-  if (nowStr != sendStr) {  // 沒連線一樣傳送至buffer
-    // Serial.printf("[SendCallerNumber] Sending Number: %s\n", nowStr.c_str());  // 除錯資訊
-    client_send(nowStr);
-    sendStr = nowStr;
-    nowStrDemo = nowStr;
-    onMessage_time = currentMillis;  // 重置 onMessage 計時器
-  }
-}
-
-#else
-
 void IRAM_ATTR handleInterrupt() {
   // currentMillis = millis();
   InterruptCount += 1;
   if (!setup_finish)
     return;
-  sendCallerNumber(millis());  // 持續監測數字變化
-
   // 檢查是否超過100ms
   if (currentMillis - lastScanDisplayTime >= CHECK_DISPLAY_INTERVAL) {
     lastScanDisplayTime = currentMillis;
     scanCallCount = 0;  // 重置計數器
   }
-
   // 只在計數器小於3時呼叫scanDisplayDigits
   if (scanCallCount < SCAN_NUM) {
     has_interrupted = true;
     scanCallCount++;
     scanDisplayDigits();  // 數字掃描
   }
+  sendCallerNumber(millis());  // 持續監測數字變化則發送數字資料
 }
 
-bool reverse = true;  // H/W Ver.2.0
+int n_ok = 1, n_bad = 0, n_total = 1;
+bool reverse = true;  // true -> H/W Ver.2.0
 int convertToNumber() {
   const int pins[] = { LED_a, LED_b, LED_c, LED_d, LED_e, LED_f, LED_g };
   int values[7];
@@ -714,7 +520,7 @@ int convertToNumber() {
     int pattern[7];
     int number;
   } patterns[] = {
-    { { 0, 0, 0, 0, 0, 0, 1 }, 0 },
+    { { 0, 0, 0, 0, 0, 0, 1 }, 0 },  // -
     { { 1, 1, 1, 1, 1, 1, 0 }, 0 },
     { { 0, 1, 1, 0, 0, 0, 0 }, 1 },
     { { 1, 1, 0, 1, 1, 0, 1 }, 2 },
@@ -727,15 +533,31 @@ int convertToNumber() {
     { { 1, 1, 1, 1, 0, 1, 1 }, 9 }
   };
 
-
-  if (reverse) {
-    delayMicroseconds(5);   // OK:200,100    BAD:
-    // vTaskDelay(pdMS_TO_TICKS(0.2));  // 0.x ms delay, Fail!
-  }
+  delayMicroseconds(50);  // OK:8,10,50,100,1000   Bad:1, 5, 6       Issue:7,
   for (int i = 0; i < 7; i++) {
     values[i] = digitalRead(pins[i]);
   }
-
+  n_total = n_ok + n_bad;
+  if ((!reverse && nowStr.equals("888")) && ((n_total % 100 == 0))) {  // 硬體故障, ~5秒測一次
+    updateSystemState(STATE_NUMBER_ERROR);
+  }
+  if (((n_total <= 1500) && (n_total % 500 == 0)) || ((n_total <= 50000) && (n_total % 10000 == 0))) {
+    if (n_total != 0) {
+      Serial.printf("\nCTN Bad=%d, OK=%d, ER=%.2f%%\n", n_bad, n_ok, (n_bad * 100.0) / (n_total));
+      Serial.printf("reverse: %d, nowStr: %s\n", reverse, nowStr);
+      if ((((n_bad * 100) / (n_total)) > 10)) {  // 錯誤率過高
+        // Serial.printf("H/W Fail! Change reverse flag!\n");
+        updateSystemState(STATE_NUMBER_ERROR);
+      }
+      if (n_ok >= 10000000) {
+        n_bad = 0;
+        n_ok = 1;
+        n_total = 1;
+      }
+    } else {
+      Serial.printf("\nCTN Bad=%d, OK=%d\n", n_bad, n_ok);
+    }
+  }
   for (const auto& p : patterns) {
     bool match = true;
     // Serial.printf("C:");
@@ -753,52 +575,25 @@ int convertToNumber() {
         }
       }
     }
-    if (match) return p.number;
+    if (match) {
+      n_ok++;
+      return p.number;
+    }
   }
-
+  n_bad++;
+  n_total = n_ok + n_bad;
+  if (reverse && (nowStr.equals("000") || (n_bad > 10 && ((((n_bad * 100) / (n_total)) > 10))))) {
+    n_total = n_ok + n_bad;
+    Serial.printf("\nCTN Bad=%d, OK=%d, ER=%.2f%%\n", n_bad, n_ok, (n_bad * 100.0) / (n_total));
+    Serial.printf("H/W 1.0 or H/W Fail! Change reverse flag!\n");
+    updateSystemState(STATE_NUMBER_ERROR);
+    reverse = !reverse;
+    n_bad = 0;
+    n_ok = 1;
+    n_total = 1;
+  }
   return -1;
 }
-
-// // 數字轉換函數
-// int convertToNumber() {
-//   const int pins[] = { LED_a, LED_b, LED_c, LED_d, LED_e, LED_f, LED_g };
-//   int values[7];
-
-//   for (int i = 0; i < 7; i++) {
-//     values[i] = digitalRead(pins[i]);
-//   }
-
-//   // 七段顯示器解碼邏輯
-//   struct {
-//     int pattern[7];
-//     int number;
-//   } patterns[] = {
-//     { { 0, 0, 0, 0, 0, 0, 1 }, 0 },
-//     { { 1, 1, 1, 1, 1, 1, 0 }, 0 },
-//     { { 0, 1, 1, 0, 0, 0, 0 }, 1 },
-//     { { 1, 1, 0, 1, 1, 0, 1 }, 2 },
-//     { { 1, 1, 1, 1, 0, 0, 1 }, 3 },
-//     { { 0, 1, 1, 0, 0, 1, 1 }, 4 },
-//     { { 1, 0, 1, 1, 0, 1, 1 }, 5 },
-//     { { 1, 0, 1, 1, 1, 1, 1 }, 6 },
-//     { { 1, 1, 1, 0, 0, 0, 0 }, 7 },
-//     { { 1, 1, 1, 1, 1, 1, 1 }, 8 },
-//     { { 1, 1, 1, 1, 0, 1, 1 }, 9 }
-//   };
-
-//   for (const auto& p : patterns) {
-//     bool match = true;
-//     for (int i = 0; i < 7; i++) {
-//       if (values[i] != p.pattern[i]) {
-//         match = false;
-//         break;
-//       }
-//     }
-//     if (match) return p.number;
-//   }
-
-//   return -1;
-// }
 
 // 數字顯示函數
 void scanDisplayDigits() {
@@ -821,21 +616,18 @@ void sendCallerNumber(unsigned long currentMillis) {
   if (currentMillis - lastCheckNumber < CHECK_NUMBER_INTERVAL)
     return;
   lastCheckNumber = currentMillis;
-  if (!has_interrupted) return;
-
+  if (!has_interrupted)
+    return;
   if (n1 >= 0 && n2 >= 0 && n3 >= 0) {
     nowStr = String(n1) + String(n2) + String(n3);
     matchCt = (nowStr == preStr) ? matchCt + 1 : 1;
     preStr = nowStr;
-
     if (matchCt >= 3 && (pn1 != n1 || pn2 != n2 || pn3 != n3)) {
       pn1 = n1;
       pn2 = n2;
       pn3 = n3;
-
       if (nowStr != sendStr) {  // 沒連線一樣傳送至buffer
         client_send(nowStr);
-
         sendStr = nowStr;
         nowStrDemo = nowStr;
         onMessage_time = currentMillis;  // 重置 onMessage 計時器
@@ -846,10 +638,6 @@ void sendCallerNumber(unsigned long currentMillis) {
   }
   has_interrupted = false;
 }
-
-
-#endif
-
 
 void setupOTA() {
   // ArduinoOTA.setHostname("esp32-ota");
@@ -887,7 +675,6 @@ void setupOTA() {
       Serial.println("End Failed");
     }
   });
-
   ArduinoOTA.begin();
 }
 
@@ -960,7 +747,7 @@ bool connectToWiFi(const char* ssid_in, const char* password_in) {
     subnet = WiFi.subnetMask();
     dns = WiFi.dnsIP();
 
-    Serial.println("\nWi-Fi connected successfully with DHCP!");
+    Serial.println("Wi-Fi connected successfully with DHCP!");
     Serial.print("AP LAN IP Address: ");
     Serial.println(apIP);
     Serial.println("STA Configured successfully");
@@ -1114,6 +901,10 @@ void initLedConfigs() {
   // STATE_TRANS, 7
   ledConfigs[STATE_TRANS].red = { true, true, 100, 10000, 0 };  // 紅燈快速亮一下
   ledConfigs[STATE_TRANS].green = { true, false, 0, 0, 0 };     // 綠燈持續亮
+
+  // STATE_TRANS, 8
+  ledConfigs[STATE_NUMBER_ERROR].red = { true, false, 0, 0, 0 };     // 紅燈持續亮
+  ledConfigs[STATE_NUMBER_ERROR].green = { false, false, 0, 0, 0 };  // 綠燈持續滅
 }
 
 // LED 先亮後滅 !!!@@@
@@ -1147,7 +938,7 @@ void updateLEDState() {
 // 更新系統狀態
 void updateSystemState(SystemState newState, const String& error) {
   // void updateSystemState(SystemState newState, const String& error = "") {
-  // 打印狀態
+  // 列印狀態
   Serial.printf("S%d ", newState);
   if (error.length() > 0) {
     status.lastError = error;
@@ -1168,61 +959,34 @@ void updateSystemState(SystemState newState, const String& error) {
 // LED_RED:33, LED_GREEN:32
 // LOW LED亮
 void blinkLED(TimerHandle_t xTimer) {
-  currentMillis = millis();
+  unsigned long currentMillis = millis();
   LedState* ledState = (LedState*)pvTimerGetTimerID(xTimer);
 
-  int LED = (ledState == &ledConfigs[status.state].red ? LED_RED : LED_GREEN);
+  int selectedLED = (ledState == &ledConfigs[status.state].red ? LED_RED : LED_GREEN);
   if (ledState->isBlinking) {
     if (ledState->isOn && (currentMillis - ledState->lastToggle >= ledState->onTime)) {
       ledState->isOn = false;
       ledState->lastToggle = currentMillis;
-      digitalWrite(ledState == &ledConfigs[status.state].red ? LED_RED : LED_GREEN, HIGH);  // LED滅
-      // Serial.printf("LED(%d)滅! ", LED);
+      digitalWrite(selectedLED, HIGH);  // LED滅
+      if (selectedLED == LED_RED)       //
+        digitalWrite(LED_BLUE, HIGH);   // LED亮
+      // Serial.printf("LED(%d)滅! ", selectedLED);
     } else if (!ledState->isOn && (currentMillis - ledState->lastToggle >= ledState->offTime)) {
       ledState->isOn = true;
       ledState->lastToggle = currentMillis;
-      digitalWrite(ledState == &ledConfigs[status.state].red ? LED_RED : LED_GREEN, LOW);  // LED亮
-      // Serial.printf("LED(%d)亮! ", LED);
+      digitalWrite(selectedLED, LOW);  // LED亮
+      if (selectedLED == LED_RED)      //
+        digitalWrite(LED_BLUE, LOW);   // LED滅
+      // Serial.printf("LED(%d)亮! ", selectedLED);
     }
   } else {  // 不閃爍時用
-    // digitalWrite(ledState == &ledConfigs[status.state].red ? LED_RED : LED_GREEN, ledState->isOn ? HIGH:LOW );
     int status = (ledState->isOn ? LOW : HIGH);
-    digitalWrite(LED, status);
-    // Serial.printf("LED(%d)切換%d! ", LED, status);
+    digitalWrite(selectedLED, status);
+    if (selectedLED == LED_RED)        //
+      digitalWrite(LED_BLUE, status);  // LED滅
+    // Serial.printf("LED(%d)切換%d! ", selectedLED, status);
   }
 }
-
-// WebSocket 事件回調函數
-// void onEventsCallback(WebsocketsEvent event, String data) {
-//   if (event == WebsocketsEvent::ConnectionOpened) {
-//     Serial.println("Event:Connection Opened");
-//   } else if (event == WebsocketsEvent::ConnectionClosed) {
-//     Serial.println("\nEvent:Connection Closed");
-//   } else if (event == WebsocketsEvent::GotPing) {
-//     Serial.print("I");
-//     client.pong();
-//     Serial.print("o ");
-//   } else if (event == WebsocketsEvent::GotPong) {
-//     Serial.print("O");
-//     ping_EX_no_reply_count = 0;
-//   }
-// }
-
-// WebSocket 消息回調函數
-// void onMessageCallback(WebsocketsMessage message) {
-//   onMessage_time = 0;
-//   if (message.data() != "pong") {
-//     if (demoState) {
-//       updateSystemState(STATE_DEMO);
-//     } else {
-//       updateSystemState(STATE_WEBSOCKET_CONNECTED);
-//     }
-//     Serial.println("Received: " + message.data());
-//     if (message.data().startsWith("OK,")) {
-//       waitingResponse = false;
-//     }
-//   } else Serial.print("B ");  // Ping_EX Back.
-// }
 
 // WebSocket 消息回調函數
 void onMessageCallback(String message) {
@@ -1282,7 +1046,7 @@ void setupWebSocket() {
         updateSystemState(STATE_WEBSOCKET_CONNECTED, "WebSocket 已連接！");
         return;  // 連接成功，退出函數
       }
-      vTaskDelay(pdMS_TO_TICKS(100));  // n + 1000, Fail: 1000,500,300    OK:100,200
+      vTaskDelay(pdMS_TO_TICKS(100));  // n + 1000, OK:100,200    Fail: 1000,500,300
     }
 
     Serial.println("[狀態] 連接失敗，嘗試下一個伺服器...");
@@ -1321,7 +1085,6 @@ void webSocketEvent(WStype_t type, uint8_t* payload, size_t length) {
       // pong will be send automatically
       // Serial.print("Ping Received");
       Serial.print("I");
-      // webSocketClient.sendTXT("pong");
       Serial.print("o");  // Pass
       // webSocketClient.sendPong();
       // webSocketClient.sendPing();  // 發送 PING 訊息
@@ -1364,7 +1127,8 @@ void Ping_EX() {
   else
     message = String(Caller_Number) + "," + "ping" + "," + nowStrDemo;
   if (webSocketClient.isConnected()) {
-    webSocketClient.sendTXT(message);
+    check_auth();
+    webSocketClient.sendTXT(message);  // PING
     Serial.print("E");
     lastPING = currentMillis;
     onMessage_time = lastPING;  // 重置 onMessage 計時器
@@ -1378,7 +1142,7 @@ void Ping_EX() {
 TaskStatus_t previousTaskStatus[MAX_TASKS];
 UBaseType_t previousTaskCount = 0;
 
-// 打印任務狀態
+// 列印任務狀態
 void printTaskStats() {
   TaskStatus_t taskStatusArray[MAX_TASKS];
   UBaseType_t taskCount = uxTaskGetNumberOfTasks();
@@ -1419,7 +1183,7 @@ void printTaskStats() {
       cpuUsage = (float)runTimeIncrement / (float)timeIncrement * 100.0;
     }
 
-    // 打印任務信息
+    // 列印任務信息
     Serial.printf("Task: %s, CPU Usage: %.2f%%\n", taskName, cpuUsage);
   }
 
@@ -1447,7 +1211,7 @@ void GetRunTimeStats() {
     percentStr.trim();
     percentStr.replace("%", "");
     int percent = percentStr.toInt();
-    // 如果百分比大於等於 1，則打印該行並增加計數
+    // 如果百分比大於等於 1，則列印該行並增加計數
     if (percent >= 1) {
       Serial.println(line);
       count++;
@@ -1505,7 +1269,6 @@ void showTaskLoad() {
   }
 }
 
-
 // 檢查系統狀態
 void check_system(unsigned long lastCheckTime, unsigned long currentMillis) {
   calculateCPULoad(lastCheckTime, currentMillis);
@@ -1527,7 +1290,6 @@ void calculateCPULoad(unsigned long lastCheckTime, unsigned long currentMillis) 
     idleCountLast[i] = idleCount[i];
   }
 }
-
 
 // **首頁**
 void handleRoot() {
@@ -1772,32 +1534,34 @@ void sendBufferedData() {
   checkResponse();
 }
 
+void check_auth() {
+  String message = "";
+  if (new_connect) {
+    new_connect = false;
+    char bssid[18];
+
+    message = String(Caller_Number) + ",auth," + "liM3yMfrMIAWHmFVvGQ1RA3BmdCTx2/hHdFbzv7ulcQ=";  // # ASTRO_cmb-caller
+    updateSystemState(STATE_TRANS);
+    webSocketClient.sendTXT(message);  // AUTH
+    vTaskDelay(pdMS_TO_TICKS(200));    // 或使用 delay
+
+    sprintf(bssid, "%02X:%02X:%02X:%02X:%02X:%02X", WiFi.BSSID()[0], WiFi.BSSID()[1], WiFi.BSSID()[2], WiFi.BSSID()[3], WiFi.BSSID()[4], WiFi.BSSID()[5]);
+    message = String(Caller_Number) + ",info," + "'SSID:" + String(WiFi.SSID()) + " ; RSSI:" + String(WiFi.RSSI()) + "dBm" + " ; BSSID:" + String(bssid) + " ; Ver:" + String(Version) + "'";
+    updateSystemState(STATE_TRANS);
+    webSocketClient.sendTXT(message);  // INFO
+    vTaskDelay(pdMS_TO_TICKS(200));    // 或使用 delay
+  }
+}
+
 // 發送 WebSocket 消息
 void sendWebSocketMessage(int value) {
   String message = "";
-  if (!new_connect) {
-    message = String(Caller_Number) + "," + String(value);
-  } else {
-    new_connect = false;
-    char bssid[18];
-    sprintf(bssid, "%02X:%02X:%02X:%02X:%02X:%02X", WiFi.BSSID()[0], WiFi.BSSID()[1], WiFi.BSSID()[2], WiFi.BSSID()[3], WiFi.BSSID()[4], WiFi.BSSID()[5]);
-    message = String(Caller_Number) + "," + String(value) + ",INFO: 'SSID:" + String(WiFi.SSID()) + " ; RSSI:" + String(WiFi.RSSI()) + "dBm" + " ; BSSID:" + String(bssid) + " ; Ver:" + String(Version) + "'";
-    // updateSystemState(STATE_TRANS);
-    vTaskDelay(pdMS_TO_TICKS(200));  // 或使用 delay
-    // bool success = webSocketClient.sendTXT(message);
-    // vTaskDelay(pdMS_TO_TICKS(200));  // 或使用 delay
-    // if (success) {
-    //   updateSystemState(STATE_WEBSOCKET_CONNECTED);
-    //   Serial.print("傳送：");
-    //   Serial.println(message);
-    // } else {
-    //   updateSystemState(STATE_WEBSOCKET_CONNECTING);
-    //   Serial.printf("傳送(%s)失敗，WebSocket 可能未連接", message.c_str());
-    // }
-    // return;
-  }
+
+  check_auth();
+
+  message = String(Caller_Number) + ",send," + String(value);
   updateSystemState(STATE_TRANS);
-  bool success = webSocketClient.sendTXT(message);
+  bool success = webSocketClient.sendTXT(message);  // NUMBER
 
   if (success) {
     updateSystemState(STATE_WEBSOCKET_CONNECTED);
@@ -1848,7 +1612,6 @@ void checkResponse() {
     timeoutCount = 0;
   }
 }
-
 
 // 處理按鈕
 void handleButton(unsigned long currentMillis) {
@@ -1911,7 +1674,6 @@ void toggleDemoMode() {
   }
 }
 
-
 // 檢查 IP 是否可用
 bool isIPAvailable(IPAddress ip) {
   bool available = true;
@@ -1925,11 +1687,9 @@ bool isIPAvailable(IPAddress ip) {
     }
     delay(100);  // 短暫延遲避免過度頻繁
   }
-
   // 如果超過一半的ping成功，認為IP在使用中
   if (successCount > RETRY_COUNT / 2) {
     available = false;
   }
-
   return available;
 }

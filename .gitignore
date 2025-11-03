@@ -200,3 +200,11 @@ cython_debug/
 # [Python] PyPI configuration file
 .pypirc
 
+
+
+# =========================================
+
+
+Src/*
+!Src/cmb-caller/
+!Src/cmb-caller-frontend/

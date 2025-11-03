@@ -1,0 +1,28 @@
+void GetRunTimeStats() {
+  char buffer[1024];  // 假設 buffer 大小為 1024
+  vTaskGetRunTimeStats(buffer);
+  // 將 buffer 轉換為字串
+  String stats = String(buffer);
+  // 使用換行符分割字串
+  int start = 0;
+  int end = stats.indexOf('\n');
+  int count = 0;
+  while (end != -1 && count < 3) {
+    String line = stats.substring(start, end);
+    // 找到百分比的位置
+    int percentIndex = line.lastIndexOf('\t') + 1;
+    String percentStr = line.substring(percentIndex);
+    // 去掉百分比符號並轉換為整數
+    percentStr.trim();
+    percentStr.replace("%", "");
+    int percent = percentStr.toInt();
+    // 如果百分比大於等於 1，則打印該行並增加計數
+    if (percent >= 1) {
+      Serial.println(line);
+      count++;
+    }
+    // 更新起始和結束位置
+    start = end + 1;
+    end = stats.indexOf('\n', start);
+  }
+}

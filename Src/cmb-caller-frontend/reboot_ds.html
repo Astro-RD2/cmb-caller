@@ -1,0 +1,102 @@
+#創建 templates/index.html：
+
+html
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Pub/Sub 消息發布工具</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .container { max-width: 600px; }
+        .form-group { margin: 15px 0; }
+        label { display: block; margin-bottom: 5px; }
+        select, input, textarea { width: 100%; padding: 8px; margin: 5px 0; }
+        button { background: #4285f4; color: white; padding: 10px 20px; border: none; cursor: pointer; }
+        .success { color: green; margin: 10px 0; }
+        .error { color: red; margin: 10px 0; }
+        .quick-actions { margin: 20px 0; }
+        .quick-btn { margin: 5px; padding: 8px 15px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Pub/Sub 消息發布工具</h1>
+        
+        <div class="quick-actions">
+            <h3>快速操作:</h3>
+            <button class="quick-btn" onclick="quickRestart('trial')">重啟 Trial 環境</button>
+            <button class="quick-btn" onclick="quickRestart('live')">重啟 Live 環境</button>
+        </div>
+
+        <form id="pubsubForm">
+            <div class="form-group">
+                <label for="project_id">選擇項目:</label>
+                <select id="project_id" name="project_id" required>
+                    <option value="">請選擇...</option>
+                    {% for name, pid in projects.items() %}
+                    <option value="{{ pid }}">{{ name }} ({{ pid }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="message_type">消息類型:</label>
+                <input type="text" id="message_type" name="message_type" value="SYS_REQUEST">
+            </div>
+
+            <div class="form-group">
+                <label for="message_content">消息內容:</label>
+                <textarea id="message_content" name="message_content" rows="4">sys_restart</textarea>
+            </div>
+
+            <button type="submit">發布消息</button>
+        </form>
+
+        <div id="result"></div>
+    </div>
+
+    <script>
+        document.getElementById('pubsubForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = {
+                project_id: document.getElementById('project_id').value,
+                message_type: document.getElementById('message_type').value,
+                message_content: document.getElementById('message_content').value
+            };
+
+            try {
+                const response = await fetch('/publish', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(formData)
+                });
+
+                const result = await response.json();
+                displayResult(result);
+            } catch (error) {
+                displayResult({success: false, error: error.message});
+            }
+        });
+
+        async function quickRestart(env) {
+            try {
+                const response = await fetch(`/restart/${env}`);
+                const result = await response.json();
+                displayResult(result);
+            } catch (error) {
+                displayResult({success: false, error: error.message});
+            }
+        }
+
+        function displayResult(result) {
+            const resultDiv = document.getElementById('result');
+            if (result.success) {
+                resultDiv.innerHTML = `<div class="success">✅ ${result.message}</div>`;
+            } else {
+                resultDiv.innerHTML = `<div class="error">❌ ${result.error}</div>`;
+            }
+        }
+    </script>
+</body>
+</html>

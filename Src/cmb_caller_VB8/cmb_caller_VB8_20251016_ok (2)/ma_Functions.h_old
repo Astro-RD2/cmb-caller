@@ -1,0 +1,672 @@
+#ifndef MA_FUNCTIONS_H
+#define MA_FUNCTIONS_H
+
+#include <Arduino.h> // 這是最基本的，通常會包含
+//#include <EEPROM.h>
+
+#define SW 0
+#define BLED 2
+#define RF_GPIO  19
+//<ESP32_Left_side-------->
+//3.3v
+#define TST_1     23
+#define TST_2     22
+#define TST_3     21
+//GND 
+//<--------ESP32_Left_side>
+
+#define SRV_PIN     34
+#define EEPROM_SIZE 64
+#define EEPROM_MAC_ADDR_START 0
+
+#define CLEAR_BUTTON_PIN 0
+#define CLEAR_WINDOW_MS 300000 
+
+#define RE_ASEND_TIME 1
+#define RF_SEND_TIME 10
+//要修改的參數
+String esp32_version="Key_b8_v01";
+//
+unsigned int debug_gpio=0;
+unsigned int ma_rf_mode=4;//4dC305=>1  3dC305=>2 C305=>3 繼光=>4 繼光4數字=>5
+
+// Scan timeout (ms)
+String pcUR0Value="";
+unsigned int pcUR0Data=0;
+unsigned long delayStart = 0; // the time the delay started
+unsigned long delayStart1 = 0; // the time the delay started
+//
+int le_t1=0;
+int le_t2=0;
+byte le_e=0;
+int le_ok[50][40]={0};
+int le_ok_number=0;
+int le_ok_number_old=-1;
+int le_ok_nu_i=0;
+
+String le_str1="";
+
+//ble t1
+int le_e1=0;
+//unsigned long rf_delayStart = 0; // the time the delay started
+unsigned int ma_rf_t1=0;
+unsigned int ma_rf_t2=0;
+unsigned int ma_rf_tr=0;
+unsigned int ma_rf_tr4=0;
+
+//String read_debug_str="";
+// unsigned int ma_Asend_i=0;
+// unsigned int ma_Asend_en=0;
+// unsigned int ma_Asend_timeout=0;
+//int cldData =-1;
+//int cldData_i =0;
+int cldData_x =0;
+int cldData_a[20]={0};
+int ok_number=-1;
+
+uint8_t ma_rf_mode_a=0;
+uint8_t ma_rf_h[10]={0};
+uint8_t ma_rf_e[10]={0};
+bool haveROMdata;
+
+void ma_rev_rf()
+{
+  //RF xPortGetCoreID() ==>1
+  int i=0,j=0;
+  int m=0,n=0;
+  // String ss="ID="+String(xPortGetCoreID())+" "+String(millis());
+  // Serial.println(ss);
+  //Serial.print("1");
+  ma_rf_t1=0;
+  ma_rf_t2=0;
+
+  if (le_e1==0)
+  {
+    ma_rf_tr=1;
+    if (debug_gpio==1)
+    {
+      digitalWrite(TST_1, HIGH);
+      digitalWrite(TST_2, HIGH);
+      if (le_t1==10)//
+      {
+        digitalWrite(TST_3, HIGH);
+      }
+    }
+    delayMicroseconds(300);
+    i=digitalRead(SRV_PIN);
+    if (le_e==0)
+    {
+      if (i==1)
+      {
+        le_ok[le_t2][le_t1]=1;
+      } 
+      else
+      {
+        le_ok[le_t2][le_t1]=0;
+      }
+      //脈波數量
+      m=25;
+      le_t1++;
+      if (le_t1>=m)
+      {
+        le_e=1;
+        ma_rf_tr=0;
+        delayStart1 = millis();
+        //Serial.println("4");
+      }
+      
+      if (debug_gpio==1 )
+      {
+        digitalWrite(TST_2, LOW);
+      }
+      if (debug_gpio==1 && le_t1==20)
+      {
+        digitalWrite(TST_3, LOW);
+      }
+    }
+  }
+}
+
+void IRAM_ATTR isr_handler() 
+{
+  ma_rev_rf();
+  //Serial.println("1");
+}
+
+void ma_1ms_timer()
+{
+  if((millis() - delayStart) >= 1)
+  {
+    delayStart = millis();
+    ma_rf_t1++;
+    ma_rf_t2++;
+  }
+}
+
+
+//RF
+void ma_RF_init()
+{
+  le_t1=0;
+  le_t2=0;
+  le_ok_nu_i=0;
+  le_e=0;
+  le_e1=0;
+  le_str1="";
+  ma_rf_tr=0;
+  ma_rf_tr4=0;
+  if (debug_gpio==1)
+  {
+    digitalWrite(TST_1, LOW);
+    digitalWrite(TST_2, LOW);
+    digitalWrite(TST_3, LOW);
+  }
+}
+void ma_RF_end()
+{
+  if (ma_rf_mode==4 || ma_rf_mode==5)
+  {
+    if (ma_rf_tr4==1 && ma_rf_t1 >4)
+    {
+      ma_rf_t1=0;
+      ma_RF_init();
+      //Serial.println("1");
+    }
+  }
+  if (ma_rf_t1 > 10)//1.1sec  rf end
+  {
+    ma_rf_t1=0;
+    
+    le_ok_number_old=-1;
+    //key  white  Orange  
+    ma_RF_init();
+    //Serial.println("2");
+  }
+  if (ma_rf_tr==1)//除去單脈波
+  {
+    if (ma_rf_t2>2)
+    {
+      ma_RF_init();
+      //Serial.println("3");
+    }
+  }
+}
+
+String ma_RF_decoding2() 
+{
+  int i=0;
+  String a="";
+  for(i=0;i<25;i++)
+  {
+    a+=String(le_ok[le_t2][i]);
+  }
+  //Serial.println(a);
+  return a;
+}
+
+int ma_RF_decoding3() 
+{
+  int j=0;
+  int i=0;
+  if (ma_rf_mode==4)
+  {
+    for(i=10;i<20;i++)
+    {
+      j=j<<1;
+      if(le_ok[le_t2][i]==1)
+      {
+        j|=1;
+      }
+    }
+    if (j>999)
+    {
+      j=1024;//000
+    }
+  }
+  else if (ma_rf_mode==5)
+  {
+    for(i=8;i<22;i++)
+    {
+      j=j<<1;
+      if(le_ok[le_t2][i]==1)
+      {
+        j|=1;
+      }
+    }
+    if (j>9999)
+    {
+      j=0;//000
+    }
+  }
+  return j;
+}
+
+void ma_RF_decoding() 
+{
+  int i=0;
+  int j=0;
+  if ((millis()- delayStart1) >= 1)//25脈波後 1ms 為每一組 資料
+  {
+    delayStart1 = millis();
+    //
+    if (le_e==1)
+    {
+      //Serial.println("B");
+      if (debug_gpio==1)
+      {
+        digitalWrite(TST_3, LOW);
+      }
+      //在讀一次 正常是0
+      if (digitalRead(SRV_PIN)==1)
+      {
+        le_ok[le_t2][le_t1]=1;
+      }
+      else
+      {
+        le_ok[le_t2][le_t1]=0;
+      }
+      le_t1=0;
+      le_e=0;
+      //轉字串比對
+      String a=ma_RF_decoding2();
+      //Serial.println(a);
+      //
+      if (le_str1 !=a)
+      {
+        le_str1=a;
+        le_ok_nu_i=0;
+        //Serial.println(a);
+      }
+      else
+      {
+        le_ok_nu_i++;
+        if (debug_gpio==1)
+        {
+          digitalWrite(TST_2, LOW);
+        }
+        if (le_ok_nu_i>=2)//29次
+        {
+          le_ok_nu_i=0;
+          le_e1=1;//不偵測中斷
+          //data
+          //RFOK
+          if (debug_gpio==1)
+          {
+            digitalWrite(TST_1, LOW);
+          }
+
+          le_ok_number=ma_RF_decoding3();
+          if (le_ok_number_old!=le_ok_number)
+          {
+            le_ok_number_old=le_ok_number;
+            //cldData=le_ok_number;
+            //
+            // ma_ur2_send("BLE_",le_ok_number,"_S");
+            // ma_Asend_timeout=0;
+            // ma_Asend_i=0;
+            // ma_Asend_en=1;
+            //bleData_temp=le_ok_number;
+            //ma_RF_decoding_ble();
+            //le_ok_id=id;
+            ok_number=le_ok_number;
+            String ss="[RF_] Read:"+String(le_ok_number);
+            Serial.println(ss); //
+            //
+            if (ma_rf_mode_a==0)
+            {
+              ma_rf_mode_a=1;
+              Serial.println(a);
+              for(i=0;i<10;i++)
+              {
+                ma_rf_h[i]=le_ok[le_t2][i];
+                Serial.print(ma_rf_h[i]);
+              }
+              Serial.println("");
+              for(i=0;i<5;i++)
+              {
+                ma_rf_e[i]=le_ok[le_t2][i+20];
+                Serial.print(ma_rf_e[i]);
+              }
+              Serial.println("");
+            }
+            //
+          }
+          else
+          {
+            String ss="[RF_] Read_Same:"+String(le_ok_number);
+            //Serial.println(ss); //
+          }
+          //
+          ma_rf_tr4=1;
+        }
+      }
+      //
+      return;
+    }      
+  }
+}
+//
+
+void ma_rf_send( unsigned int tt )
+{
+  int i=0;
+  int j=0;
+  int n=0;
+  int m=0;
+  int k=0;
+  
+  int le_sned[14]={0,0,0,0,0,0,0,0,0,0,0,0,0,0};//data
+  //int aa=tt;
+  Serial.print("[RF1] ");
+  Serial.println(tt);
+  
+  if (ma_rf_mode==4)
+  {
+    tt=tt & 0x03ff;
+    for(i=0;i<10;i++)
+    {
+        int a= tt & 0x01;
+        if (a==1)
+        {
+            le_sned[i]=1;
+        }
+        else
+        {        
+            le_sned[i]=0;
+        }
+        tt=tt>>1;
+        //Serial.print(String(le_sned[i]));
+    }
+  }
+  else  if (ma_rf_mode==5)
+  {
+    tt=tt & 0x3fff;
+    for(i=0;i<14;i++)
+    {
+        int a= tt & 0x01;
+        if (a==1)
+        {
+            le_sned[i]=1;
+        }
+        else
+        {        
+            le_sned[i]=0;
+        }
+        tt=tt>>1;
+        //Serial.print(String(le_sned[i]));
+    }
+  }
+  //Serial.print(" ");
+  //
+  //ch=ch & 0x0f;
+  int le_snedaa[10]={0,0,1,0,0,0,0,1,0,1};//data0
+  int le_snedee[10]={0,0,1,0,0,0,0,0,0,0};//end
+  //int le_snedaa[10]={0,1,1,1,1,1,1,1,1,0};//data0
+  for(i=0;i<10;i++)
+  {
+     le_snedaa[i]=ma_rf_h[i];
+     le_snedee[i]=ma_rf_e[i];
+  }
+  
+  // for(i=0;i<4;i++)
+  // {
+  //     int a= ch & 0x01;
+  //     if (a==1)
+  //     {
+  //         le_snedaa[i+3]=1;
+  //     }
+  //     else
+  //     {        
+  //         le_snedaa[i+3]=0;
+  //     }
+  //     tt=tt>>1;
+  //     //Serial.print(String(le_sned[i]));
+  // }
+  n=200;
+  m=800;
+  k=6000;
+  int nh=700;
+  int mh=300;
+  //
+  ////000 1100011 0000000001 0010000000
+  if (ma_rf_mode==4)
+  {
+    for(j=0;j<RF_SEND_TIME;j++)
+    {
+      for(i=0;i<10;i++)
+      {
+        if (le_snedaa[i]==1)
+        {
+          digitalWrite(RF_GPIO, HIGH);//0
+          delayMicroseconds(nh);
+          digitalWrite(RF_GPIO, LOW);
+          delayMicroseconds(mh);
+        }
+        else
+        {
+          digitalWrite(RF_GPIO, HIGH);//1
+          delayMicroseconds(n);
+          digitalWrite(RF_GPIO, LOW);
+          delayMicroseconds(m);
+        }
+      }
+      //data
+      for(i=9;i>=0;i--)
+      {
+        if (le_sned[i]==1)
+        {
+          digitalWrite(RF_GPIO, HIGH);//1
+          delayMicroseconds(nh);
+          digitalWrite(RF_GPIO, LOW);
+          delayMicroseconds(mh);
+        }
+        else
+        {
+          digitalWrite(RF_GPIO, HIGH);//0
+          delayMicroseconds(n);
+          digitalWrite(RF_GPIO, LOW);
+          delayMicroseconds(m);
+        }
+      }
+      //end
+      for(i=0;i<5;i++)
+      {
+        if (le_snedee[i]==1)
+        {
+          digitalWrite(RF_GPIO, HIGH);//1
+          delayMicroseconds(nh);
+          digitalWrite(RF_GPIO, LOW);
+          delayMicroseconds(mh);
+        }
+        else
+        {            
+          digitalWrite(RF_GPIO, HIGH);//0
+          delayMicroseconds(n);
+          digitalWrite(RF_GPIO, LOW);
+          delayMicroseconds(m);
+        }
+      }
+      delayMicroseconds(k);
+    }
+  }
+  else if (ma_rf_mode==5)
+  {
+    //001101000000 0000000001100
+    int le_snedee[10]={1,0,0,0,0,0,0,0,0,0};//end
+    for(j=0;j<RF_SEND_TIME;j++)
+    {
+      for(i=0;i<8;i++)
+      {
+        if (le_snedaa[i]==1)
+        {
+          digitalWrite(RF_GPIO, HIGH);//0
+          delayMicroseconds(nh);
+          digitalWrite(RF_GPIO, LOW);
+          delayMicroseconds(mh);
+        }
+        else
+        {
+          digitalWrite(RF_GPIO, HIGH);//1
+          delayMicroseconds(n);
+          digitalWrite(RF_GPIO, LOW);
+          delayMicroseconds(m);
+        }
+      }
+      //data
+      for(i=13;i>=0;i--)
+      {
+        if (le_sned[i]==1)
+        {
+          digitalWrite(RF_GPIO, HIGH);//1
+          delayMicroseconds(nh);
+          digitalWrite(RF_GPIO, LOW);
+          delayMicroseconds(mh);
+        }
+        else
+        {
+          digitalWrite(RF_GPIO, HIGH);//0
+          delayMicroseconds(n);
+          digitalWrite(RF_GPIO, LOW);
+          delayMicroseconds(m);
+        }
+      }
+      //end
+      for(i=0;i<3;i++)
+      {
+        if (le_snedee[i]==1)
+        {
+          digitalWrite(RF_GPIO, HIGH);//1
+          delayMicroseconds(nh);
+          digitalWrite(RF_GPIO, LOW);
+          delayMicroseconds(mh);
+        }
+        else
+        {            
+          digitalWrite(RF_GPIO, HIGH);//0
+          delayMicroseconds(n);
+          digitalWrite(RF_GPIO, LOW);
+          delayMicroseconds(m);
+        }
+      }
+      delayMicroseconds(k);
+    }
+  }
+  
+  Serial.println("[RF1] SEND OK");
+  digitalWrite(RF_GPIO, LOW);
+}
+
+bool ma_set_data(int d)
+{
+  int i=0;
+  int j=0;
+  if (cldData_x==0)
+  {
+    for(i=0;i<20;i++)
+    {
+      if (cldData_a[i]==-1)
+      {
+        cldData_a[i]=d;
+        j=1;
+        break;
+      }
+    }
+    if (j==1)
+    {
+      String ss="[MSG] set data " + String(d);
+      Serial.println(ss);
+      return true;
+    }
+    else
+    {
+      String ss="[MSG] set data GGGGGGG" + String(d);
+      Serial.println(ss);
+      return false;
+    }
+  }
+  else
+  {
+    String ss="[MSG] set data GGGGGGG" + String(d);
+    Serial.println(ss);
+    return false;
+  }
+}
+
+int ma_get_data()
+{
+  int a=ok_number;
+  ok_number=-1;
+  return a;
+}
+
+void ma_loop()
+{
+  String ss="";
+  ma_RF_end();
+  ma_1ms_timer();
+  ma_RF_decoding();
+  if (cldData_a[0]>=0)
+  {
+    ma_rf_send(cldData_a[0]);//要花 300 ms
+    cldData_x=1;
+    for(int i=0;i<19;i++)
+    {
+      cldData_a[i]=cldData_a[i+1];
+      ss+=String(cldData_a[i])+",";
+    }
+    cldData_a[19]=-1;
+    cldData_x=0;
+    
+    Serial.println(ss);
+    ss="";
+  }
+}
+
+// bool checkROMdata()
+// {
+//   for (int i = 0; i < 6; i++) 
+//   {
+//     ma_Bytes[i] = EEPROM.read(i);
+//   }
+  
+//   if (ma_Bytes[0] == 0xFF && ma_Bytes[1] == 0xFF && ma_Bytes[2] == 0xFF)
+//   {
+//     haveROMdata = false;
+//   }
+//   else
+//   haveROMdata = true;
+
+//   return haveROMdata;
+// }
+
+void ma_set()
+{
+  pinMode(SRV_PIN, INPUT);
+  pinMode(RF_GPIO, OUTPUT);
+  digitalWrite(RF_GPIO, LOW);
+  if (debug_gpio==1)
+  {
+    pinMode(TST_1, OUTPUT);
+    pinMode(TST_2, OUTPUT);
+    pinMode(TST_3, OUTPUT);
+    digitalWrite(TST_1, LOW);
+    digitalWrite(TST_2, LOW);
+    digitalWrite(TST_3, LOW);
+  }
+  for(int i=0;i<20;i++)
+  {
+    cldData_a[i]=-1;
+  }
+  
+  
+  Serial.println("2");
+  
+  attachInterrupt(digitalPinToInterrupt(SRV_PIN), isr_handler, RISING);
+  while(1)
+  {
+    ma_loop();
+    // vTaskDelay(pdMS_TO_TICKS(1));  // ★ 必須加這行！ !!!@@@
+  }
+}
+
+#endif

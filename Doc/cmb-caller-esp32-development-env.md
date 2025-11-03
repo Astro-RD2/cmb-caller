@@ -14,8 +14,8 @@
 2. 安裝指定 Board manager
     - 於 Arduino IDE->File->Preferences->Additional boards manager URL's, 填入如下:  
       https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_dev_index.json
-    - 於 Arduino IDE->左邊側欄->Library Manager->搜索 "esp32"  
-      選擇安裝 "esp32 by Espressit" (文件撰寫時版本 3.1.1)
+    - 於 Arduino IDE->左邊側欄->Boards Manager->搜索 "esp32"  
+      選擇安裝 "esp32 by Espressit" (文件撰寫時版本 3.1.1, 更新後 3.2.0-RC2)
 3. 安裝 virtual comm driver  
    因為所使用的 ESP32 使用相容 CP2102 USB/UART bridge controller, 所以請參考如下安裝驅動程式:  
    https://sites.google.com/site/arduinochutiyan/esp32_%E5%9F%BA%E7%A4%8E/1-cp2102x-%E9%A9%85%E5%8B%95%E7%A8%8B%E5%BC%8F%E5%AE%89%E8%A3%9D  
@@ -30,7 +30,7 @@
        Port: "COM3" ```     ```<-- 選擇該 USB 對應的 Virtual COM port, e.g COM3
 6. 編譯然後上傳至 Caller module  
    Arduino IDE->Sketch->Verify/Compile [Ctrl-R] 進行程式碼驗證.  
-   Arduino IDE->Sketch->Upload [Ctrl-U] 進行編譯然後上傳至 Caller module.
+   Arduino IDE->Sketch->Upload [Ctrl-U] 進行編譯並會於成功時自動上傳至 Caller module.
 
 ## 開發架構圖
 ```
@@ -43,7 +43,8 @@ Caller device                    Development PC/Laptop
 +-----------------+              |         +----------- Open ------------- cmb-caller.ino    |
         .                        |                                         credentials.h     |
         .                        +-----------------------------------------------------------+
-        . 
+        .WiFi
+        .
         . 
 +-----------------+
 | WiFi AP         |

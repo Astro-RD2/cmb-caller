@@ -2735,7 +2735,7 @@ class WebSocketServer:
                                                 # await client_manager.update_caller_info(caller_id, cmb_msg[0].get('call_num'))
 
                                                 print(
-                                                    f"叫號機 {caller_id} 收到 'get_num_info' call_num={cmb_msg[0].get('call_num')}", flush=True)
+                                                    f"叫號機 {caller_id} 收到 'get_num_info' call_num='{cmb_msg[0].get('call_num')}'", flush=True)
 
                                                 # 防止 caller_id 不存在或 caller_num 欄位缺失
                                                 caller_num = clients.get(

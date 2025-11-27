@@ -12,3 +12,7 @@ line-bot-sdk
 line-bot-sdk
 psutil
 
+
+fastapi>=0.104.0          # FastAPI 框架
+uvicorn[standard]>=0.24.0  # ASGI 伺服器（包含標準依賴）
+pydantic>=2.0.0           # 數據驗證（FastAPI 的依賴）

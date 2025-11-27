@@ -80,33 +80,54 @@ pip show websockets
 2025/09/25  Roy Ching    加入 GCP 斷線問題處理，增加錯誤碼(005).
 2025/09/25  Roy Ching    加入 17.設定時段 (set_time_period)
 2025/10/23  Roy Ching    取消 class WebSocketClient: connect 重連 await asyncio.sleep(0.5).
+2025/11/06  Roy Ching    
 '''
 
 
-import re
 # import nest_asyncio
+# import websockets
+
+
+# fastapi_app = FastAPI()
+
+print("============================ Start!!! ============================", flush=True)
+
+import re
 import functools
 import traceback
 from google.auth import default
 from logging.handlers import RotatingFileHandler
+print("=== 1 ===", flush=True)
 import logging
-import websockets
 import asyncio
 import json
 import requests
 import os
 import platform
 from datetime import datetime, timedelta
+print("=== 3 ===", flush=True)
 import time
 from typing import Optional, Dict, Any, Deque
 from contextlib import asynccontextmanager
-from google.api_core.exceptions import NotFound
+print("=== 4 ===", flush=True)
 import psutil  # 用於獲取進程記憶體資訊
 from collections import deque
+print("=== 5 ===", flush=True)
 from linebot import LineBotApi
 from linebot.models import TextSendMessage
+print("=== 7 ===", flush=True)
+from fastapi import FastAPI, WebSocket
+from fastapi.websockets import WebSocketDisconnect
+from fastapi.responses import JSONResponse
+print("=== 8 ===", flush=True)
+import uvicorn
+import sys
+import __main__
+print("=== 9 ===", flush=True)
 
-VER = "20251105 Trial"
+import websockets     # websocket client 用
+
+VER = "20251119 Trial"
 
 print(".", flush=True)
 print(".", flush=True)
@@ -114,21 +135,23 @@ print("============================ New Instance started!!! ====================
 print(".", flush=True)
 print(".", flush=True)
 
-try:
-    from google.cloud import pubsub_v1
-except ImportError:
-    pubsub_v1 = None
-    print("警告：無法匯入 google.cloud.pubsub_v1，請確認是否已安裝相關套件。", flush=True)
-    print("如於 Windows 環境下執行，請忽略此訊息!", flush=True)
 
-try:
-    __IPYTHON__  # 如果在 Jupyter 中，這個變數會存在
-    import nest_asyncio
-    nest_asyncio.apply()
-    print("nest_asyncio 已啟用 (Jupyter 環境)", flush=True)
-except NameError:
-    pass  # 在標準 Python 環境中，什麼都不做
-    print("nest_asyncio 未啟用 (非 Jupyter 環境)", flush=True)
+
+if 'K_SERVICE' in os.environ:
+    from google.api_core.exceptions import NotFound
+    from google.cloud import pubsub_v1
+    print("GCR 環境...", flush=True)
+else:
+    pubsub_v1 = None
+    print("非 GCR 環境，不匯入 google api...", flush=True)
+    try:
+        __IPYTHON__  # 如果在 Jupyter 中，這個變數會存在
+        import nest_asyncio
+        nest_asyncio.apply()
+        print("nest_asyncio 已啟用 (Jupyter 環境)", flush=True)
+    except NameError:
+        pass  # 在標準 Python 環境中，什麼都不做
+        print("nest_asyncio 未啟用 (非 Jupyter 環境)", flush=True)
 
 # 讓所有 print 都即時輸出
 print = functools.partial(print, flush=True)
@@ -141,6 +164,192 @@ timestamp = time.time()     # 必須有
 # 設置 websockets.server 記錄器的日誌級別為 WARNING 或更高
 # 這樣 INFO 級別的 'connection open' 和 'connection closed' 就不會顯示
 logging.getLogger("websockets.server").setLevel(logging.WARNING)
+
+
+# ============================================
+# 兼容性導入
+# ============================================
+try:
+    # FastAPI 0.100+ 版本
+    from fastapi.websockets import WebSocketState
+    print("FastAPI 0.100+")
+except ImportError:
+    try:
+        # FastAPI 0.65 - 0.99 版本
+        print("FastAPI 0.65 - 0.99 版本")
+        from starlette.websockets import WebSocketState
+    except ImportError:
+        # 自定義 WebSocketState（備用方案）
+        from enum import IntEnum
+        print("自定義 WebSocketState（備用方案）")
+        class WebSocketState(IntEnum):
+            CONNECTING = 0
+            CONNECTED = 1
+            DISCONNECTED = 2
+            RESPONSE = 3
+print(f"✅ WebSocketState 導入成功: {WebSocketState}")
+# 創建 FastAPI 實例
+fastapi_app = FastAPI(title="CMB Caller Frontend", version=VER)
+
+# @app.post("/restart")
+@fastapi_app.get("/restart")
+@fastapi_app.get("/reboot")
+async def simple_restart():
+    """簡單重啟端點"""
+    service_name = os.environ.get('K_SERVICE', 'unknown')
+    print("\n/restart")
+    print(f"🔄 重啟請求: {service_name}")
+    
+    # 非同步退出
+    import asyncio
+    asyncio.create_task(exit_after_delay())
+    
+    return {
+        "message": "重啟中...",
+        "service": service_name,
+        "note": "服務將在幾秒內重新啟動"
+    }
+
+async def exit_after_delay():
+    """延遲後退出"""
+    await asyncio.sleep(2)  # 確保回應已發送
+    sys.exit(0)  # Cloud Run 會自動重啟容器
+    
+@fastapi_app.get("/health")
+async def health_check():
+    """健康檢查端點"""
+    return JSONResponse({
+        "status": "healthy",
+        "websocket_server": "running" if ws_fe_server else "stopped",
+        "active_connections": len(await client_manager.get_all_clients()),
+        "revision": revision,
+        "timestamp": datetime.now().isoformat()
+    })
+
+
+@fastapi_app.get("/status")
+@fastapi_app.get("/info")
+async def get_detailed_status():
+    """詳細狀態報告"""
+    print("/status")
+    try:
+        clients = await client_manager.get_all_clients()
+
+        connection_stats = {
+            "total_callers": len(clients),
+            "total_connections": sum(len(client_info.get('connections', {})) for client_info in clients.values()),
+            "callers_detail": {}
+        }
+
+        for caller_id, info in clients.items():
+            caller_detail = {
+                "caller_num": info.get('caller_num', 0),
+                "connections_count": len(info.get('connections', {})),
+            }
+            
+            # 安全處理所有可能包含 datetime 的欄位
+            datetime_fields = ['connect_time', 'disconnect_time', 'last_activity', 'created_at']
+            
+            for field in datetime_fields:
+                if field in info and info[field] is not None:
+                    value = info[field]
+                    # 檢查是否為 datetime 物件
+                    if hasattr(value, 'isoformat'):
+                        caller_detail[field] = value.isoformat()
+                    else:
+                        caller_detail[field] = str(value)  # 轉為字串保底
+                else:
+                    caller_detail[field] = None
+            
+            connection_stats["callers_detail"][caller_id] = caller_detail
+
+        # my_service_name = os.environ.get('K_SERVICE', 'unknown')
+        # print(f"🆔 我是 Cloud Run 服務: {my_service_name}")
+        my_file_name = f"{__main__.__file__}"
+        print(f"🆔 我檔案名稱是: {my_file_name}")
+    
+        return JSONResponse({
+            "service": my_file_name,
+            "status": "running",
+            "connections": connection_stats,
+            "revision": revision,
+            "start_time": datetime.fromtimestamp(start_timestamp).isoformat(),
+            "uptime_seconds": int(time.time() - start_timestamp)  # 轉為整數確保可序列化
+        })
+
+    except Exception as e:
+        logging.error(f"/status 路由錯誤: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "service": "cmb-caller-frontend",
+                "status": "error",
+                "message": str(e)
+            }
+        )
+
+# @fastapi_app.get("/status")
+# async def get_detailed_status():
+#     """詳細狀態報告"""
+#     clients = await client_manager.get_all_clients()
+
+#     connection_stats = {
+#         "total_callers": len(clients),
+#         "total_connections": sum(len(client_info['connections']) for client_info in clients.values()),
+#         "callers_detail": {}
+#     }
+
+#     for caller_id, info in clients.items():
+#         connection_stats["callers_detail"][caller_id] = {
+#             "caller_num": info.get('caller_num', 0),
+#             "connections_count": len(info['connections']),
+#             "connect_time": info.get('connect_time'),
+#             "disconnect_time": info.get('disconnect_time')
+#         }
+
+#     return JSONResponse({
+#         "service": "cmb-caller-frontend",
+#         "status": "running",
+#         "connections": connection_stats,
+#         "revision": revision,
+#         "start_time": datetime.fromtimestamp(start_timestamp).isoformat(),
+#         "uptime_seconds": time.time() - start_timestamp
+#     })
+
+
+@fastapi_app.get("/")
+async def root():
+    """根路徑"""
+    return JSONResponse({
+        "service": "cmb-caller-frontend",
+        "GCR":     revision,
+        "version": VER,
+        "endpoints": {
+            "/": "此訊息",
+            "/health": "健康檢查",
+            "/status": "詳細狀態",
+            "/info":   "詳細狀態",
+            "/restart":"",
+            "/reboot": ""
+        },
+        # "websocket_endpoint": "wss://cmb-caller-frontend-410240967190.asia-east1.run.app/"
+    })
+
+# WebSocket 端點 - 維持原本的端點路徑
+@fastapi_app.websocket("/")
+async def websocket_endpoint(websocket: WebSocket):
+    global ws_fe_server
+    if ws_fe_server:
+        await ws_fe_server.handle_websocket_connection(websocket)
+
+# 可選：如果需要多個 WebSocket 路徑
+
+
+@fastapi_app.websocket("/ws")
+async def websocket_alternative(websocket: WebSocket):
+    global ws_fe_server
+    if ws_fe_server:
+        await ws_fe_server.handle_websocket_connection(websocket)
 
 
 # -------------------------------------------------------------
@@ -196,7 +405,7 @@ else:
 subscriber = None
 is_subscribed = False
 streaming_pull_future = None
-ws_server = None
+ws_fe_server = None
 # ConnectionBlocker = True        # (Trial 才有效) 模擬斷線設
 ConnectionBlocker = False    # (Trial 才有效) 模擬斷線設
 start_timestamp = time.time()
@@ -244,42 +453,6 @@ def sys_exit():
         logging.error(f"優雅關閉過程中發生錯誤: {e}")
         # 強制退出
         os._exit(1)
-
-
-# # 新增一個簡單的 HTTP 端點
-# @app.route('/trigger-subprogram', methods=['GET', 'POST'])
-# def trigger_subprogram():
-#     """觸發副程式的 HTTP 端點"""
-#     try:
-#         print("HTTP 端點 trigger_subprogram!", flush=True)
-#         # 在背景執行緒中執行副程式，避免阻塞主程式
-#         thread = threading.Thread(target=run_subprogram)
-#         thread.daemon = True
-#         thread.start()
-#         return jsonify({"status": "success", "message": "副程式已開始執行"})
-#     except Exception as e:
-#         return jsonify({"status": "error", "message": str(e)}), 500
-
-
-# def run_subprogram():
-#     """你的副程式邏輯"""
-#     print("副程式開始執行...", flush=True)
-#     # 這裡放入你的副程式程式碼
-#     # 例如：處理特定任務、清理資料等
-#     print("副程式執行完成", flush=True)
-
-# # 簡單的測試端點
-
-
-# @app.route('/test', methods=['GET', 'POST'])
-# def test_endpoint():
-#     print("HTTP 端點 test!", flush=True)
-#     return jsonify({
-#         "status": "ok",
-#         "service": "cmb-caller-frontend",
-#         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-#         "revision": revision
-#     })
 
 
 class LineNotifier:
@@ -439,7 +612,8 @@ class ConnectionMonitor:
             disconnection_duration = 0
             if disconnection_status:
                 disconnection_duration = time.time() - self.last_disconnect_time
-                print(f"\n已斷線 {disconnection_duration:.2f} 秒.", flush=True)  # 因 check_health 10 秒才被呼叫一次,所以只是概略的時間.
+                # 因 check_health 10 秒才被呼叫一次,所以只是概略的時間.
+                print(f"\n已斷線 {disconnection_duration:.2f} 秒.", flush=True)
             else:
                 # print(
                 #     f"\n連線時間 {time.time() - self.last_connect_time} 秒.", flush=True)
@@ -586,7 +760,7 @@ login_buffer = LoginBuffer()
 
 async def delayed_subscribe():
     """延遲訂閱 Pub/Sub 並處理訊息，包含完整錯誤處理和資源清理"""
-    global subscriber, is_subscribed, streaming_pull_future, ws_server, topic_path, revision, revision_code, project_id
+    global subscriber, is_subscribed, streaming_pull_future, ws_fe_server, topic_path, revision, revision_code, project_id
     print("#{revision} 延遲訂閱 Pub/Sub 並處理訊息...")
     # revision = os.getenv('K_REVISION', 'local')
     # match = re.search(r'-(\d{5})-', revision)
@@ -793,18 +967,18 @@ async def delayed_subscribe():
                 # await subscriber.close()    #
                 subscriber.close()    # !!!@@@
             except Exception as e:
-                logging.info(f"#{revision} [清理] 關閉 SubscriberClient 錯誤: {e}")
+                logging.warning(f"#{revision} [清理] 關閉 SubscriberClient 錯誤: {e}")
             subscriber = None
 
-        if ws_server is not None:       # 連至 Caller
+        if ws_fe_server is not None:       # 連至 Caller
             logging.info(f"#{revision} [清理] 停止 WebSocket Server & Clinnt 服務")
             try:
-                await ws_server.stop()
+                await ws_fe_server.stop()
                 # print("0_關閉 CMB Main Server WebSocket 連接!!!")
-                await ws_server.ws_client.close()  # "關閉 CMB Main Server WebSocket 連接!!!"
+                await ws_fe_server.ws_CmbWebSocketClient.close()  # "關閉 CMB Main Server WebSocket 連接!!!"
             except Exception as e:
-                logging.info(f"#{revision} [清理] 停止 WebSocket 服務錯誤: {e}")
-            ws_server = None
+                logging.warning(f"#{revision} [清理] 停止 WebSocket 服務錯誤: {e}")
+            ws_fe_server = None
 
         # print(f'#{revision},起始時間:{datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")}, 訂閱 & Websocket 服務已完全停止')
         logging.info(
@@ -841,7 +1015,7 @@ def broadcast_message(content, pmessage):
 # @app.get("/health")
 # async def health_check():
 #     """健康檢查端點"""
-#     return {"status": "ok", "websocket": "running" if ws_server else "stopped"}
+#     return {"status": "ok", "websocket": "running" if ws_fe_server else "stopped"}
 
 # @app.post("/broadcast")
 # async def handle_broadcast(request: Request):
@@ -1208,7 +1382,7 @@ new_add = False
 
 
 class ClientManager:        # 紀錄管理 caller 連線
-    global ws_server, new_add
+    global ws_fe_server, new_add
 
     def __init__(self):
         self.clients = {}
@@ -1289,8 +1463,8 @@ class ClientManager:        # 紀錄管理 caller 連線
             #         }
             #         try:
             #             print("add_connection 5")
-            #             # await ws_server.process_message(json.dumps(data), websocket, is_new_connection=False)
-            #             await ws_server.process_message(json.dumps(data), websocket, True)
+            #             # await ws_fe_server.process_message(json.dumps(data), websocket, is_new_connection=False)
+            #             await ws_fe_server.process_message(json.dumps(data), websocket, True)
             #         except Exception as e:
             #             logging.error(f"處理新連接訊息時發生錯誤: {e}")
             #     except Exception as e:
@@ -1372,14 +1546,15 @@ class ClientManager:        # 紀錄管理 caller 連線
 
                     # print('nc ', end='', flush=True)
                     try:
-                        if websocket.open:
+                        # if websocket.open:
+                        if websocket.client_state == WebSocketState.CONNECTED:
                             if ws_type & ws_type_enable:
                                 if websocket != ws_bypass:
                                     # print('nd ', end='', flush=True)
                                     # EX: v0005,696,update
                                     # logging.info(f"通知客戶端:{message}")
                                     # 至 caller
-                                    await websocket.send(message)
+                                    await websocket.send_text(message)
                                     notify_count += 1
                                     # print(f'主動通知:{ws_type},{ws_type_enable}', flush=True)
                                 else:
@@ -1453,66 +1628,151 @@ client_manager = ClientManager()
 
 
 class JSONMemoryManager:
-    def __init__(self, max_capacity=100):
+    def __init__(self, max_capacity=100, ttl_seconds=300):
         self.data = {"records": []}
         self.max_capacity = max_capacity
-
-    def add_data(self, new_record):
-        try:
-            new_record_1 = json.loads(new_record)
-            self.data["records"].append(new_record_1)
-            # print(f"0_add_data count_data:{manager.count_data()}, {new_record_1}")
-            # 如果超過最大容量，移除最舊的資料
-            if len(self.data["records"]) > self.max_capacity:
-                to_remove = self.data["records"][0]
-                print(f"即將移除最舊一筆回覆暫存資料: {to_remove}")
-                self.data["records"].pop(0)
-                print(
-                    f"1_add_data count_data:{manager.count_data()}, {new_record_1}")
-        except json.JSONDecodeError:
-            print("加入資料失敗：不是合法的 JSON 格式")
-
+        self.ttl = ttl_seconds
+        self._lock = asyncio.Lock()
+    
+    async def add_data(self, new_record):
+        async with self._lock:
+            now = time.time()
+            
+            # 1. 清理所有過期資料
+            original_count = len(self.data["records"])
+            self.data["records"] = [
+                record for record in self.data["records"] 
+                if now - record.get('_timestamp', 0) < self.ttl
+            ]
+            
+            removed_count = original_count - len(self.data["records"])
+            if removed_count > 0:
+                logging.debug(f"TTL 清理: 移除了 {removed_count} 筆過期記錄")
+            
+            # 2. 添加新記錄
+            try:
+                record_data = json.loads(new_record)
+                record_data['_timestamp'] = now
+                
+                self.data["records"].append(record_data)
+                
+                # 3. 嚴格按容量控制（移除最舊的）
+                if len(self.data["records"]) > self.max_capacity:
+                    # 按時間排序，移除最舊的
+                    self.data["records"].sort(key=lambda x: x['_timestamp'])
+                    
+                    excess_count = len(self.data["records"]) - self.max_capacity
+                    removed_actions = [r.get('action', 'unknown') for r in self.data["records"][:excess_count]]
+                    
+                    # 移除最舊的記錄
+                    self.data["records"] = self.data["records"][excess_count:]
+                    
+                    logging.info(f"容量清理: 移除了 {excess_count} 筆最舊記錄")
+                
+            except json.JSONDecodeError as e:
+                logging.error(f"JSON 解析失敗: {e}")
+            except Exception as e:
+                logging.error(f"儲存資料失敗: {e}")
+    
+    async def search_data(self, condition):
+        """搜尋資料 - 保持原有介面"""
+        async with self._lock:
+            now = time.time()
+            
+            # 先清理過期資料確保搜尋結果正確
+            self.data["records"] = [
+                record for record in self.data["records"] 
+                if now - record.get('_timestamp', 0) < self.ttl
+            ]
+            
+            # 執行搜尋（與原來完全相同的介面）
+            matched = [record for record in self.data["records"] if condition(record)]
+            return matched
+    
+    async def remove_matched(self, matched):
+        """移除已匹配的資料 - 保持原有介面"""
+        async with self._lock:
+            original_count = len(self.data["records"])
+            self.data["records"] = [
+                record for record in self.data["records"] 
+                if record not in matched
+            ]
+            removed_count = original_count - len(self.data["records"])
+            
+            if removed_count > 0:
+                logging.debug(f"移除了 {removed_count} 筆匹配記錄")
+    
     def count_data(self):
+        """取得資料數量 - 保持原有介面"""
         return len(self.data["records"])
-
-    def search_data(self, condition):
-        """根據條件搜索資料"""
-        matched = [record for record in self.data["records"]
-                   if condition(record)]  # [2][3]
-        # print(f"search_data count_data:{manager.count_data()}, {condition}")
-        return matched
-
-    def remove_matched(self, matched):
-        """自動整理剩餘資料"""
-        self.data["records"] = [
-            record for record in self.data["records"] if record not in matched]  # [4]
-        # print(f"remove_matched count_data:{manager.count_data()}, {matched}")
-
+    
     def show_all_data(self):
-        """顯示所有資料"""
+        """顯示所有資料 - 保持原有介面"""
         print(f"目前共有 {self.count_data()} 筆資料：")
         for i, record in enumerate(self.data["records"], start=1):
             print(f"{i}: {record}")
 
 
+# class JSONMemoryManager:
+#     def __init__(self, max_capacity=100):
+#         self.data = {"records": []}
+#         self.max_capacity = max_capacity
+
+#     def add_data(self, new_record):
+#         try:
+#             new_record_1 = json.loads(new_record)
+#             self.data["records"].append(new_record_1)
+#             # print(f"0_add_data count_data:{manager.count_data()}, {new_record_1}")
+#             # 如果超過最大容量，移除最舊的資料
+#             if len(self.data["records"]) > self.max_capacity:
+#                 to_remove = self.data["records"][0]
+#                 print(f"即將移除最舊一筆回覆暫存資料: {to_remove}")
+#                 self.data["records"].pop(0)
+#                 print(
+#                     f"1_add_data count_data:{manager.count_data()}, {new_record_1}")
+#         except json.JSONDecodeError:
+#             print("加入資料失敗：不是合法的 JSON 格式")
+
+#     def count_data(self):
+#         return len(self.data["records"])
+
+#     def search_data(self, condition):
+#         """根據條件搜索資料"""
+#         matched = [record for record in self.data["records"]
+#                    if condition(record)]  # [2][3]
+#         # print(f"search_data count_data:{manager.count_data()}, {condition}")
+#         return matched
+
+#     def remove_matched(self, matched):
+#         """自動整理剩餘資料"""
+#         self.data["records"] = [
+#             # [4]
+#             record for record in self.data["records"] if record not in matched]
+#         # print(f"remove_matched count_data:{manager.count_data()}, {matched}")
+
+#     def show_all_data(self):
+#         """顯示所有資料"""
+#         print(f"目前共有 {self.count_data()} 筆資料：")
+#         for i, record in enumerate(self.data["records"], start=1):
+#             print(f"{i}: {record}")
+
+
 # manager = JSONMemoryManager()
-manager = JSONMemoryManager(max_capacity=5)    # 限制最多 xx 筆資料
+manager = JSONMemoryManager(max_capacity=20)    # 限制最多 xx 筆資料, 5 -> 20
 server_connection_monitor = ConnectionMonitor()
 
 # 連結 CMB Main Server
-
-
-class WebSocketClient:
-    global ConnectionBlocker, ws_server, run_mode, server_connection_monitor
+class CmbWebSocketClient:
+    global ConnectionBlocker, ws_fe_server, run_mode, server_connection_monitor
 
     def __init__(self, ws_url):     # CMB Main Server
         """初始化 WebSocket Client"""
         self.ws_url = ws_url
         self.cmb_msg = ''
-        self.ws_server = None  # CMB Main Server
+        self.ws_cmb_client = None  # CMB Main Server
         self.retry_delay = 3
         self.max_retry_delay = 30   # 20 -> 30
-        self.ws_server_server_lock = NotifyingLock("ws_server_lock")
+        self.ws_cmb_client_lock = NotifyingLock("ws_cmb_server_lock")
         # 建立一個統一的訊息佇列
         self.message_queue = asyncio.Queue()
         # self.connected = True
@@ -1558,25 +1818,24 @@ class WebSocketClient:
                     # ping_timeout=10,
                     ping_interval=10,  # 原本是 30，改小可更快偵測
                     ping_timeout=5,    # 原本是 10，改小可更快判定失敗
-                ) as ws_server:
+                ) as _ws_cmb_client:
 
-                    connect_time = (time.time() - self.server_connection_monitor.last_disconnect_time)
+                    connect_time = (
+                        time.time() - self.server_connection_monitor.last_disconnect_time)
                     print(f"已成功連線!(斷線 {connect_time:.2f} 秒) ")
 
-                    self.ws_server = ws_server
+                    self.ws_cmb_client = _ws_cmb_client
                     # 記錄成功連線
                     await self.server_connection_monitor.record_connect()
                     logging.info(
                         f"#{os.getenv('K_REVISION', 'local')} 已連接到 CMB Main Server {self.ws_url}")
-
-
 
                     # 發送連接數據（重試機制）
                     max_retries = 6
                     for attempt in range(max_retries):
                         try:
                             connect_data = {"source": "tawe"}
-                            await self.ws_server.send(json.dumps(connect_data))
+                            await self.ws_cmb_client.send(json.dumps(connect_data))
                             break
                         except Exception as e:
                             if attempt < max_retries - 1:
@@ -1602,9 +1861,10 @@ class WebSocketClient:
                     else:
                         await asyncio.sleep(threshold)
 
-            except websockets.exceptions.ConnectionClosed as e:
-                reason = f"CMB Main Server 連接關閉，代碼: {e.code}, 原因: '{e.reason}'"
-                logging.info(reason)
+            # except websockets.exceptions.ConnectionClosed as e:
+            except WebSocketDisconnect:  # FastAPI 的斷線異常
+                reason = "CMB Main Server 連接關閉，代碼: 'WebSocketDisconnect'"
+                logging.warning(reason)
                 # await self.server_connection_monitor.record_disconnect(reason)
                 await asyncio.sleep(self.retry_delay)
                 self.retry_delay = min(
@@ -1612,8 +1872,8 @@ class WebSocketClient:
                 start_retry_time = time.time()
 
             except Exception as e:
-                reason = f"連線到 CMB Main Server 發生未知錯誤: {e}"
-                logging.info(reason)
+                reason = f"連線到 CMB Main Server 發生未知錯誤: '{e}' OR 超時?"
+                logging.warning(reason)
                 # await self.server_connection_monitor.record_disconnect(reason)
                 await asyncio.sleep(self.retry_delay)
                 self.retry_delay = min(
@@ -1633,8 +1893,8 @@ class WebSocketClient:
     #                 pass
 
     #         # 2. 關閉 WebSocket 連接
-    #         if self.ws_server:
-    #             await self.ws_server.close()
+    #         if self.ws_cmb_client:
+    #             await self.ws_cmb_client.close()
 
     #         # 3. 等待短暫時間讓操作完成
     #         await asyncio.sleep(2)
@@ -1659,12 +1919,13 @@ class WebSocketClient:
             except asyncio.CancelledError:
                 break
             except Exception as e:
+                pass
                 logging.error(f"生成健康報告時出錯: {e}")
 
     async def heartbeat_task(self):
         """每分鐘執行的心跳任務"""
         # while True:
-        while ws_server != None:
+        while ws_fe_server != None:
             try:
                 await asyncio.sleep(10)  # 每x秒檢查一次
                 # logging.info("heartbeat_task。")
@@ -1722,6 +1983,7 @@ class WebSocketClient:
             # 啟動主連接循環
             await self.connect()
         except asyncio.CancelledError:
+            pass
             logging.info("應用程式被取消")
         finally:
             # 清理任務
@@ -1771,10 +2033,11 @@ class WebSocketClient:
         logging.info(
             f"回覆 OK 至 CMB Main Server_R:{json.dumps(data)} ")
         # 至 CMB Main Server
-        await ws_server.ws_client.send(json.dumps(data), "RESET_OK_RETURN")      # async def send(
+        await ws_fe_server.ws_CmbWebSocketClient.send(json.dumps(data), "RESET_OK_RETURN")      # async def send(
         periodic_pass = False
 
-    async def generate_mock_message(self, message_data):
+    # class CmbWebSocketClient:
+    async def generate_simulation_message(self, message_data):
         """生成模擬訊息並放入佇列"""
         mock_message = json.dumps(message_data)
         logging.info(f"生成模擬訊息: {mock_message}")
@@ -1782,21 +2045,28 @@ class WebSocketClient:
 
     async def _websocket_listener(self):
         """專門負責從 WebSocket 接收訊息並放入佇列"""
-        logging.info("_websocket_listener 啟動!")
+        # logging.info("_websocket_listener_a")
         # self.connected = True
         try:
-            async for message in self.ws_server:
+            # logging.info("_websocket_listener_b")
+            async for message in self.ws_cmb_client:
+                # logging.info("_websocket_listener_c")
                 if message is None:
+                    # logging.info("_websocket_listener_d")
                     logging.info(f"WebSocket 收到無效訊息 '{message}'。")
                 else:
+                    # logging.info("_websocket_listener_e")
                     await self.message_queue.put(message)
+            # logging.info("_websocket_listener_f")
             logging.info("WebSocket 連線已關閉，監聽任務結束。")
         except asyncio.CancelledError:
+            pass
             logging.warning("WebSocket 監聽任務已被取消!!!")
         except Exception as e:
-            logging.info(f"WebSocket 監聽發生錯誤: '{e}'!")
+            pass
+            logging.warning(f"WebSocket 監聽發生錯誤: '{e}'!")
         # logging.info("WebSocket 發送 None 訊息。")
-        logging.info("WebSocket 監聽結束，已將 Poison Pill 放入訊息佇列。")
+        logging.warning("WebSocket 監聽結束，已將 Poison Pill 放入訊息佇列。")
         # self.connected = False
         await self.message_queue.put(None)  # 發送 Poison Pill
 
@@ -1820,7 +2090,7 @@ class WebSocketClient:
                 except asyncio.QueueEmpty:
                     break
 
-            # async for message in self.ws_server:
+            # async for message in self.ws_cmb_client:
             while True:     # !!!@@@
                 # while self.connected:
                 # 從佇列中等待並取出訊息
@@ -1839,15 +2109,15 @@ class WebSocketClient:
                         continue
 
                     self.cmb_msg = message  # 儲存原始訊息
-                    manager.add_data(message)
+                    await manager.add_data(message)
 
                     # 優先找出符合直接廣播的 action 的資料
-                    cmb_msg = manager.search_data(
-                        lambda x: x.get('action') in servsr_replay_active_actions_check)    # ~~~~
+                    cmb_msg = await manager.search_data(
+                        lambda x: x.get('action') in servsr_replay_active_actions_check)
 
                     # 若找不到符合直接廣播的 action 的資料，嘗試找 wait_time_avg, ( *** send 回覆 ***)
-                    if not cmb_msg and not manager.search_data(lambda x: 'action' in x):
-                        cmb_msg = manager.search_data(
+                    if not cmb_msg and not await manager.search_data(lambda x: 'action' in x):
+                        cmb_msg = await manager.search_data(
                             lambda x: "wait_time_avg" in x)
                         if not cmb_msg:
                             logging.warning(
@@ -1857,7 +2127,7 @@ class WebSocketClient:
                         # 例行資料(send), 移除且不廣播.
                         if cmb_msg[0].get('wait_time_avg') == '':
                             # print(f'0_cmb_msg:{cmb_msg}')
-                            manager.remove_matched(cmb_msg)
+                            await manager.remove_matched(cmb_msg)
                             continue
                         # print(f'1_cmb_msg:{cmb_msg}')
                         pass
@@ -1871,7 +2141,7 @@ class WebSocketClient:
                         # Logger.log(f"收到 CMB Main Server JSON 訊息: {message}")
                         # print(f'2_cmb_msg:{cmb_msg}')
                         json_data = cmb_msg[0]
-                        manager.remove_matched(cmb_msg)
+                        await manager.remove_matched(cmb_msg)
                         caller_id = json_data.get('caller_id', '')
                         action = json_data.get('action', '')
                         # if action == '':
@@ -1930,12 +2200,12 @@ class WebSocketClient:
                             if json_data["result"] == "OK":          # Json
                                 # 驗證成功
 
-                                # try:
-                                #     # print(f' {caller_id},驗證成功_J_1! ',end='', flush=True)
-                                #     # print(f'{caller_id},{json_data}')
+                                print(f' {caller_id},驗證成功_J_1! ',end='', flush=True)
+                                print(f'{caller_id},{json_data}')
 
                                 try:
-                                    if websocket.open:
+                                    # if websocket.open:
+                                    if websocket.client_state == WebSocketState.CONNECTED:
                                         # 至 caller
                                         # print(f' {caller_id},驗證成功_J_2_1! ',end='', flush=True)
 
@@ -1955,12 +2225,18 @@ class WebSocketClient:
                                                     json_data["hardware"] = True
                                             # print(
                                             #     f'{caller_id},{ws_type},驗證成功_J! ', end='\n', flush=True)
-                                            await websocket.send(json.dumps(json_data))
+                                            # 須為 Server 身分送至 Client
+                                            # await self.send_to_websocket(websocket, (json_data))
+                                            # await websocket.send(json.dumps(json_data))
+                                            await ws_fe_server.send_to_websocket(websocket, (json_data))
                                         else:
                                             # print(f'{caller_id},{ws_type},驗證成功_C! ', end='\n', flush=True)
                                             # print(f"CSV AUTH:{json_data} ")
                                             #
-                                            await websocket.send(f"OK,{json_data.get('caller_name','')},auth")
+                                            # await websocket.send_text(f"OK,{json_data.get('caller_name', '')},auth")
+                                            # await websocket.send(f"OK,{json_data.get('caller_name','')},auth")
+                                            await ws_fe_server.send_to_websocket(websocket, f"OK,{json_data.get('caller_name','')},auth")
+                                            
                                         await client_manager.add_connection(caller_id, websocket, ws_type)
 
                                         # 防止 curr_num 欄位不存在
@@ -1978,33 +2254,6 @@ class WebSocketClient:
 
                                             print(
                                                 f"收到_0 {caller_id} curr_num<0 ({curr_num}) 不更新現在叫號值:{caller_num}", flush=True)
-
-                                            # # 2025/09/24 失敗!
-                                            # print(f"{caller_id}: 發送 get_num_info!", flush=True )
-                                            # send_data = {
-                                            #     'action': "get_num_info",         # 動作指令
-                                            #     "vendor_id": self.vendor_id,      # 叫號機廠商 id
-                                            #     "caller_id": caller_id,          # 叫號機 id
-                                            #     "uuid": hex(id(websocket))
-                                            # }
-
-                                            # # Try Block added for reconnection logic or error handling
-                                            # try:
-                                            #     if not self.ws_client:
-                                            #         print('login_get_num_info: ws_client 已斷線!')
-                                            #         # 這裡可以嘗試重連 ws_client，或直接跳過
-                                            #         pass
-                                            #     else:
-                                            #         try:
-                                            #             print(f'ws_client.send: {json.dumps(send_data)}')
-                                            #             # 至 CMB Main Server
-                                            #             await self.ws_client.send(json.dumps(send_data), "login_get_num_info")    # async def send(
-                                            #         except Exception as e:
-                                            #             logging.error(
-                                            #                 f"login_get_num_info 傳送至 Server 失敗): {e}")
-                                            # except Exception as e:
-                                            #     logging.error(f"login_get_num_info 外層 Try 失敗: {e}")
-
                                             pass
                                         else:
                                             print(
@@ -2023,15 +2272,104 @@ class WebSocketClient:
                                 #         f"驗證成功處理時發生錯誤: {e}")
                                 #     return False
                             else:
+
+                                # # 驗證失敗
+                                # print(f'驗證失敗 {caller_id},{json_data}')
+                                
+                                # try:
+                                #     # 檢查 WebSocket 連接狀態
+                                #     if websocket.client_state != WebSocketState.CONNECTED:
+                                #         logging.warning(f"WebSocket 已關閉,無法回傳失敗訊息給 {caller_id}")
+                                #         return
+                                    
+                                #     # 確保 json_data 是 dict
+                                #     parsed_data = json_data
+                                #     if isinstance(json_data, str):
+                                #         try:
+                                #             parsed_data = json.loads(json_data)
+                                #         except json.JSONDecodeError as e:
+                                #             logging.error(f"JSON 解析失敗 for caller {caller_id}: {e}")
+                                #             parsed_data = {}
+                                #     elif not isinstance(json_data, dict):
+                                #         logging.error(f"json_data 類型錯誤 for caller {caller_id}: {type(json_data)}")
+                                #         parsed_data = {}
+                                    
+                                #     # 取得 uuid,使用 get 方法避免 KeyError
+                                #     uuid = parsed_data.get('uuid', '')
+                                    
+                                #     # 判斷 uuid 是否以 CSV_ 開頭
+                                #     if not uuid.startswith('CSV_'):
+                                #         # 非 CSV_ 開頭,直接發送原始 JSON
+                                #         try:
+                                #             # await websocket.send(json.dumps(parsed_data))
+                                #             await ws_fe_server.send_to_websocket(websocket, (json_data))
+
+                                #             logging.info(f"已發送驗證失敗訊息至 {caller_id}")
+                                #         except Exception as send_err:
+                                #             logging.error(f"發送 JSON 訊息失敗 for caller {caller_id}: {send_err}")
+                                #     else:
+                                #         # CSV_ 開頭,解析 result 代碼並回傳對應訊息
+                                #         try:
+                                #             result = parsed_data.get("result", "")
+                                #             code = ""
+                                            
+                                #             # 解析 result 代碼
+                                #             if result:
+                                #                 parts = result.split(',')
+                                #                 if len(parts) > 1:
+                                #                     code_parts = parts[1].split(':')
+                                #                     if len(code_parts) > 0:
+                                #                         code = code_parts[0].strip()
+                                            
+                                #             # 錯誤代碼對應表
+                                #             msg_map = {
+                                #                 '051': '001:驗證失敗',
+                                #                 '003': '001:驗證失敗',
+                                #                 '002': '002:無效的CallerID',
+                                #                 '001': '006:無效的CMD指令',
+                                #                 '009': '007:文字錯誤/其它'
+                                #             }
+                                            
+                                #             # 取得對應訊息,預設為驗證失敗
+                                #             msg = msg_map.get(code, '001:驗證失敗')
+                                            
+                                #             # 發送文字訊息
+                                #             response_text = f"Fail, {msg},auth"
+                                #             await websocket.send_text(response_text)
+                                #             logging.info(f"已發送 CSV 格式失敗訊息至 {caller_id}: {response_text}")
+                                #             print(f'{caller_id},{msg}')
+                                            
+                                #         except Exception as parse_err:
+                                #             logging.error(f"解析或發送 CSV 訊息失敗 for caller {caller_id}: {parse_err}")
+                                #             # 嘗試發送預設錯誤訊息
+                                #             try:
+                                #                 await websocket.send_text("Fail, 001:驗證失敗,auth")
+                                #             except Exception as fallback_err:
+                                #                 logging.error(f"發送預設錯誤訊息也失敗 for caller {caller_id}: {fallback_err}")
+                                
+                                # except Exception as e:
+                                #     logging.error(f"傳送失敗訊息至 Caller {caller_id} 失敗: {e}", exc_info=True)
+                                #     # 記錄完整的堆疊追蹤以便除錯
+                                #     import traceback
+                                #     logging.error(f"詳細錯誤追蹤:\n{traceback.format_exc()}")
+                                
+    
                                 # 驗證失敗
                                 print(
                                     f'驗證失敗 {caller_id},{json_data}')
                                 try:
-                                    if websocket.open:
+                                    # if websocket.open:
+                                    if websocket.client_state == WebSocketState.CONNECTED:
                                         # 至 caller
                                         if not json_data.get('uuid', '').startswith('CSV_'):
-                                            await websocket.send(json.dumps(json_data))
+                                            # await self.send_to_websocket(websocket, (json_data))
+                                            # await websocket.send(json.dumps(json_data))
+                                            await ws_fe_server.send_to_websocket(websocket, (json_data))   # !!!@@@
                                         else:
+                                            
+                                            # 確保 json_data 是 dict
+                                            if isinstance(json_data, str):
+                                                json_data = json.loads(json_data)
                                             code = json_data.get("result").split(
                                                 ',')[1].split(':')[0].strip()
                                             msg_map = {
@@ -2045,14 +2383,15 @@ class WebSocketClient:
                                             print(f'{caller_id},{msg}')
                                             # 至 Caller
                                             # 至 caller
-                                            await websocket.send(f"Fail, {msg},auth")
+                                            await websocket.send_text(f"Fail, {msg},auth")
                                     else:
                                         logging.warning(
                                             f"WebSocket 已關閉，無法回傳失敗訊息給 {caller_id}")
                                 except Exception as e:
                                     logging.error(
                                         f"傳送失敗訊息至 Caller {caller_id} 失敗: {e}")
-                                # return False
+                                return False
+
                             # if not json_data.get('uuid', '').startswith('CSV_'):
                             #     log_mode = 'JSON'
                             # else:
@@ -2060,11 +2399,13 @@ class WebSocketClient:
                             # print(f"login {log_mode} 流程結束! ")
 
                         else:   # 未定義,群發至全部
-                            logging.info(
+                            logging.warning(
                                 f"群發未定義訊息至全部 caller_id={caller_id}: {json.dumps(cmb_msg)}")
                             await client_manager.notify_clients(caller_id, f'{json.dumps(json_data)}', 0xff)
                             websocket = await login_buffer.get(json_data['uuid'])
+                            # await self.send_to_websocket(websocket,(json_data))
                             # await websocket.send(json.dumps(json_data))
+
                             pass
 
                         # print(f'return check {action}')
@@ -2072,7 +2413,7 @@ class WebSocketClient:
                             json_data["result"] = "OK"
                             logging.info(f"回覆 OK 至 CMB Main Server_B:{json.dumps(json_data)} ")
                             # 至 CMB Main Server
-                            await ws_server.ws_client.send(json.dumps(json_data), "OK_RETURN")      # async def send(
+                            await ws_fe_server.ws_CmbWebSocketClient.send(json.dumps(json_data), "OK_RETURN")      # async def send(
                             pass
 
                     else:
@@ -2086,8 +2427,9 @@ class WebSocketClient:
                         f"處理單一訊息時發生錯誤: {inner_e}\n訊息內容: {message}", exc_info=True)
                     continue  # 明確表示繼續下一輪循環
 
-        except websockets.exceptions.ConnectionClosedError as e:
-            logging.info(f"listen CMB Main Server 連接中斷: {e}")
+        # except websockets.exceptions.ConnectionClosedError as e:
+        except WebSocketDisconnect:  # FastAPI 的斷線異常
+            logging.warning("listen CMB Main Server 連接中斷: 'WebSocketDisconnect'")
             await asyncio.sleep(1)
             # 這裡可以選擇重新連接或退出
             raise  # 如果是連接問題，可能需要重新建立連接
@@ -2105,8 +2447,10 @@ class WebSocketClient:
                     await self.websocket_listener_task
                     logging.info("websocket_listener_task 任務已正常停止。")
                 except asyncio.CancelledError:
-                    logging.info("websocket_listener_task 任務已被取消。")
+                    pass
+                    logging.warning("websocket_listener_task 任務已被取消。")
                 except Exception as e:
+                    pass
                     logging.error(f"websocket_listener_task 任務停止時發生錯誤: {e}")
 
             # logging.info(f"Listen 任務已停止! 連線時長:{(time.time()-listen_start):.2f} Sec")
@@ -2117,12 +2461,12 @@ class WebSocketClient:
         if not text:
             text = ''
         """發送訊息"""
-        async with self.ws_server_server_lock.acquire(f"ws_server_lock send: {text}, {message}"):
+        async with self.ws_cmb_client_lock.acquire(f"ws_cmb_server_lock send: {text}, {message}"):
             try:
                 # Logger.log(f"發送訊息至 CMB Main Server: {text}, {message} ")
-                if self.ws_server:
+                if self.ws_cmb_client:
                     # 至 CMB Main Server
-                    await self.ws_server.send(message)
+                    await self.ws_cmb_client.send(message)
             except Exception as e:
                 Logger.log(f"[ws.send] 傳送至Server失敗 {message}, {str(e)}")
                 raise  # 向上拋出,異常則保留
@@ -2130,9 +2474,9 @@ class WebSocketClient:
     async def close(self):     # CMB Main Server
         """關閉 WebSocket 連接"""
         print("關閉 CMB Main Server WebSocket 連接!!!")
-        if self.ws_server:
-            await self.ws_server.close()
-            self.ws_server = None
+        if self.ws_cmb_client:
+            await self.ws_cmb_client.close()
+            self.ws_cmb_client = None
 
 
 def is_json(my_string):
@@ -2153,75 +2497,91 @@ def has_websocket(clients, target_websocket):
             return True
     return False
 
+ # Caller (Client) 連接至此 WebSocketServer
+# class WebSocketServer:
 
-# 連接至 Caller (Client)
-class WebSocketServer:
+class WebSocketError(Exception):
+    pass
+
+class AuthenticationError(WebSocketError):
+    pass
+
+async def safe_send(websocket, message):
+    """安全的訊息發送"""
+    try:
+        if isinstance(message, dict):
+            await websocket.send_json(message)
+        else:
+            await websocket.send_text(str(message))
+    except Exception as e:
+        logging.error(f"發送失敗: {e}")
+        raise WebSocketError(f"發送失敗: {e}")
+        
+class ErrorHandler:
+    @staticmethod
+    async def handle_websocket_error(websocket, error, context=""):
+        error_mapping = {
+            asyncio.TimeoutError: ("008", "請求超時"),
+            ConnectionError: ("005", "連線錯誤"),
+            json.JSONDecodeError: ("006", "資料格式錯誤"),
+            KeyError: ("007", "缺少必要參數"),
+        }
+        
+        error_code, error_msg = error_mapping.get(type(error), ("999", "系統錯誤"))
+        
+        logging.error(f"{context} 錯誤: {error} (類型: {type(error).__name__})")
+        
+        try:
+            await safe_send(websocket, {"result": f"Fail, {error_code}:{error_msg}"})
+        except Exception as send_error:
+            logging.error(f"發送錯誤訊息失敗: {send_error}")
+            
+class FastAPIWebSocketServer:
     global server_connection_monitor
 
-    def __init__(self, host, port):             # Caller
-        """初始化 WebSocket Server"""
-        self.host = host
-        self.port = port
+    def __init__(self, ws_CmbWebSocketClient):
+        """初始化整合到 FastAPI 的 WebSocket Server"""
         self.vendor_id = "tawe"
-        self.ws_client = None   # 連結至 CMB Main Server 用
-        self.server = None      # 連結至 Caller 用
+        self.ws_CmbWebSocketClient = ws_CmbWebSocketClient  # 連結至 CMB Main Server 用
         self.last_num = 0
-        # self.ws_type = -1
-        self.server_timeout = 2     # 秒, 3 -> 2
+        self.server_timeout = 2
         self.ws_device_lock = NotifyingLock('ws_device_lock')
         self.server_connection_monitor = server_connection_monitor
-        print(
-            f"#{os.getenv('K_REVISION', 'local')} 初始化 WebSocket Server (對 Caller) 完成!")
+        print(f"#{os.getenv('K_REVISION', 'local')} 初始化 FastAPI WebSocket Server 完成!")
 
-    async def start(self):                      # Caller
-        """啟動Server"""
-        self.server = await websockets.serve(   # !!!@@@@
-            self.handler,
-            self.host,
-            self.port,
-            ping_interval=5,      # xx 秒，減少資源消耗
-            ping_timeout=5,       # xx 秒，給予寬裕的回應時間
-            max_size=4096,        # 限制訊息大小，避免記憶體問題
-            compression=None       # ESP32 不需要壓縮，可提高效能
-        )
-        logging.info(
-            f"#{os.getenv('K_REVISION', 'local')} cmb-caller-frontend WebSocket Server 已啟動: ws://{self.host}:{self.port}")
-        await self.server.wait_closed()  # 保持Server運行
+    async def send_to_websocket(self, websocket, data):
+        """發送訊息到 WebSocket（統一處理 JSON 和文字）"""
+        try:
+            if isinstance(data, dict):
+                # 發送 JSON 格式
+                await websocket.send_json(data)
+            else:
+                # 發送文字格式
+                await websocket.send_text(str(data))
+        except Exception as e:
+            logging.error(f"發送訊息到 WebSocket 失敗: {e}")
+            # 如果 WebSocket 已關閉，可以選擇重新連接或其他處理
+            if websocket.client_state.CLOSED:
+                logging.warning("WebSocket 已關閉，無法發送訊息")
 
-    async def stop(self):
-        """強制快速關閉 WebSocket 伺服器"""
-        if self.server:
-            self.server.close()  # 停止接受新連接
-            try:
-                # 設定超時（例如 2 秒），避免卡住
-                await asyncio.wait_for(self.server.wait_closed(), timeout=1.0)
-            except asyncio.TimeoutError:
-                # 超時後強制關閉所有連接
-                for ws in set(self.server.websockets):  # 遍歷所有活躍連接
-                    await ws.close(code=1001, reason="Server shutdown")
-            logging.info("WebSocket 伺服器已強制關閉")
-            print(
-                f"\n***** #{os.getenv('K_REVISION', 'local')} Websocket Server 伺服器已強制關閉!!! *****\n", flush=True)
-
-    # async def stop(self):                           # Caller
-    #     """停止Server"""
-    #     if self.server:
-    #         self.server.close()
-    #         await self.server.wait_closed()
-    #         print(
-    #             f"\n***** #{os.getenv('K_REVISION', 'local')} Websocket Server 已關閉!!! *****\n", flush=True)
+    async def handle_websocket_connection(self, websocket: WebSocket):
+        """處理 FastAPI WebSocket 連接"""
+        await websocket.accept()
+        await self.handler(websocket, "")
 
     async def handler(self, websocket, path):       # 多個 Caller 傳入 (連線先到這裡)
         """處理新Client連接"""
         new_connect = True
-        # response_auth = False
         caller_id = None
         caller_id_0 = None
         remove_socket = False
 
         print(f'\n新連線:{websocket} ! ', flush=True)
         try:
-            async for message in websocket:
+            # async for message in websocket:
+            while True:
+                # 使用 FastAPI 的 WebSocket 接收方法
+                message = await websocket.receive_text()
                 try:
                     # print(f'handler:{message}', flush=True)
                     await self.process_message(message, websocket, new_connect)
@@ -2229,23 +2589,27 @@ class WebSocketServer:
                 except Exception as e:
                     logging.warning(f"處理 Caller 訊息時發生錯誤: {e}", exc_info=True)
                     # caller
-                    # await websocket.send(json.dumps({"result": "Fail, 005:處理訊息錯誤"}))
+                    # await self.send_to_websocket(websocket,({"result": "Fail, 005:處理訊息錯誤"}))
                     try:
-                        await websocket.send(json.dumps({"result": "Fail, 005:處理訊息錯誤"}))
+                        await self.send_to_websocket(websocket, ({"result": "Fail, 005:處理訊息錯誤"}))
                     except Exception as send_err:
                         logging.error(f"回傳錯誤訊息時失敗: {send_err}", exc_info=True)
 
-        except websockets.exceptions.ConnectionClosed as e:
-            def get_caller_id_by_websocket(websocket, clients):
-                for caller_id, info in clients.items():
-                    if websocket in info.get('connections', {}):
-                        return caller_id
-                # return None
-                return '未知'
-
+        # except websockets.exceptions.ConnectionClosed as e:
+        # except WebSocketDisconnect:  # FastAPI 的斷線異常
+        except WebSocketDisconnect as e:    # !!!@@@
+            # def get_caller_id_by_websocket(websocket, clients):
+            #     for caller_id, info in clients.items():
+            #         if websocket in info.get('connections', {}):
+            #             return caller_id
+            #     # return None
+            #     return '未知'
+            ee = e
             try:
                 clients = await client_manager.get_all_clients()  # !!!@@@
-                caller_id = get_caller_id_by_websocket(websocket, clients)
+                # caller_id = get_caller_id_by_websocket(websocket, clients)
+                caller_id = next((cid for cid, info in clients.items(
+                ) if websocket in info.get('connections', {})), '未知')
 
                 if caller_id:
                     caller_id_0 = caller_id
@@ -2268,7 +2632,8 @@ class WebSocketServer:
 
                 # caller_id 未知表示剛連接還未 login 程式就關閉了
                 logging.warning(
-                    f"客戶端 {caller_id or '未知'},{websocket},{ws_type} 斷開連接 (code: {e.code}, reason: {e.reason})"
+                    # f"客戶端 {caller_id or '未知'},{websocket},{ws_type} 斷開連接 (code: {e.code}, reason: {e.reason})"
+                    f"客戶端 {caller_id or '未知'},{websocket},{ws_type} 斷開連接 (code: {ee.code}, reason: {ee.reason})"
                 )
 
                 remove_socket = True
@@ -2350,7 +2715,7 @@ class WebSocketServer:
                 if connect_time <= -10 or caller_id == disconnet_id:     # 斷線超過時間就不讓連線
                     logging.info(f"server 斷線中_0! ({caller_id},{action}) ")
                     json_data["result"] = "Fail, 005:disconnected from the center"
-                    await websocket.send(json.dumps(json_data))
+                    await self.send_to_websocket(websocket, (json_data))
                     return
                 else:
                     return await self.handle_json_cmd_without_reply(caller_id, json_data, websocket)
@@ -2358,7 +2723,7 @@ class WebSocketServer:
             # 檢查是否已驗證
             if not await self.check_authentication(caller_id, websocket):
                 logging.info(f"1_尚未登入: {json_data}")
-                await websocket.send(json.dumps({"result": "Fail, 004:not logged in"}))
+                await self.send_to_websocket(websocket, ({"result": "Fail, 004:not logged in"}))
                 return
 
             # 處理 WiFi 指令
@@ -2370,7 +2735,7 @@ class WebSocketServer:
             if connect_time <= -10 or caller_id == disconnet_id:     # 斷線超過時間就不讓連線
                 logging.info(f"server 斷線中_1! ({caller_id},{action}) ")
                 json_data["result"] = "Fail, 005:disconnected from the center"
-                await websocket.send(json.dumps(json_data))
+                await self.send_to_websocket(websocket, (json_data))
                 return
 
             # 處理其他 JSON 指令
@@ -2381,11 +2746,11 @@ class WebSocketServer:
 
         except Exception as e:
             # logging.error(f"[process_json_message],{check} 發生錯誤: {e}")
-            # await websocket.send(json.dumps({"result": "Fail, 999:internal error"}))
+            # await self.send_to_websocket(websocket,({"result": "Fail, 999:internal error"}))
             try:
                 # logging.error(f"[process_json_message],{check} 發生錯誤: {e}")
                 logging.error(f"[process_json_message] 發生錯誤: {e}")
-                await websocket.send(json.dumps({"result": "Fail, 999:internal error"}))
+                await self.send_to_websocket(websocket, ({"result": "Fail, 999:internal error"}))
             except Exception as send_err:
                 logging.error(
                     f"[process_json_message] 回傳錯誤訊息時又發生錯誤: {send_err}")
@@ -2421,7 +2786,7 @@ class WebSocketServer:
                     try:
                         # await client_manager.notify_clients(caller_id, json.dumps(json_data), 0x1)
                         # Caller
-                        await websocket.send(json.dumps(json_data))
+                        await self.send_to_websocket(websocket, (json_data))
                     except Exception as send_err:
                         logging.error(f"[wifi_get_status] 發生錯誤: {send_err}")
 
@@ -2435,7 +2800,7 @@ class WebSocketServer:
                 logging.info(f"3_尚未登入:'{caller_id},{m_cmd},{m_info}'")
                 # Caller
                 try:
-                    await websocket.send(f"Fail, 004:not logged in,{m_cmd}")
+                    await websocket.send_text(f"Fail, 004:not logged in,{m_cmd}")
                 except Exception as send_err:
                     logging.error(f"[check_authentication] 發送失敗: {send_err}")
                 return
@@ -2451,7 +2816,7 @@ class WebSocketServer:
                 elif m_cmd == 'info':
                     try:
                         # Caller
-                        await websocket.send(f'OK,{caller_id},info')
+                        await websocket.send_text(f'OK,{caller_id},info')
                     except Exception as send_err:
                         logging.error(f"[info] 發送失敗: {send_err}")
                 elif m_cmd in ('send', ''):   # 專門處理 'send'
@@ -2459,7 +2824,7 @@ class WebSocketServer:
                 else:
                     print(f"錯誤的命令! {caller_id},{m_cmd},{m_info}")
                     try:
-                        await websocket.send(f'OK,{caller_id},{self.last_num},{m_cmd}')
+                        await websocket.send_text(f'OK,{caller_id},{self.last_num},{m_cmd}')
                     except Exception as send_err:
                         logging.error(f"[錯誤的命令] 發送失敗: {send_err}")
             except Exception as cmd_err:
@@ -2469,7 +2834,7 @@ class WebSocketServer:
         except Exception as e:
             logging.error(f"[process_non_json_message] rty error: {e}")
             try:
-                await websocket.send("Fail, 999:internal rty error")
+                await self.send_to_websocket(websocket, "Fail, 999:internal rty error")
             except Exception as send_err:
                 logging.error(
                     f"[process_non_json_message] rty error 回報失敗: {send_err}")
@@ -2489,14 +2854,15 @@ class WebSocketServer:
             result = await client_manager.notify_clients(caller_id, json.dumps(json_data), 0x1, websocket)
             if result <= 0:     # 沒有 H/W Caller
                 json_data["result"] = "Fail, 002:device not found"
-                await websocket.send(json.dumps(json_data))     # Caller
+                # Caller
+                await self.send_to_websocket(websocket, (json_data))
         else:  # WiFi 回應
             print(f'WiFi 接收從C:{json_data}')
             await client_manager.notify_clients(caller_id, json.dumps(json_data), 0x8, websocket)
 
     async def handle_ping(self, caller_id, m_info, websocket):
         """處理ping指令"""
-        await websocket.send('pong')    # Caller
+        await self.send_to_websocket(websocket, "pong")    # Caller
         # clients = await client_manager.get_all_clients()
         # existing_num = clients.get(caller_id, {}).get('caller_num', 0)
         # if existing_num == 0 and m_info.isdigit() and int(m_info) != 0:     # !!!@@@ 須注意
@@ -2507,14 +2873,16 @@ class WebSocketServer:
         clients = await client_manager.get_all_clients()
         if clients[caller_id]['connections'][websocket]['ws_type'] == 4:  # user_get_num
             logging.info(f"5_尚未登入:'{caller_id},send,{m_info}'")
-            await websocket.send("Fail, 004:not logged in,send")    # Caller
+            # Caller
+            await self.send_to_websocket(websocket, "Fail, 004:not logged in,send")
             return
 
         new_num = int(m_info)
         clients[caller_id]['connections'][websocket]['ws_last_modified'] = time.time()
         # 更新叫號資訊
         await client_manager.update_caller_info(caller_id, new_num)
-        await websocket.send(f'OK,{caller_id},{new_num},send')      # Caller
+        # Caller
+        await websocket.send_text(f'OK,{caller_id},{new_num},send')
 
         # 記錄時間（秒差用）與格式化時間（log用）
         # conn_info = clients[caller_id]['connections'][websocket]
@@ -2567,7 +2935,7 @@ class WebSocketServer:
                         if attempt >= 1:
                             print(
                                 f'handle_json_cmd_without_reply "{action}" Retry {attempt+1}/{max_retries}')
-                        if self.ws_client:
+                        if self.ws_CmbWebSocketClient:
                             try:
                                 # 若是 send 則先 發送 update 再傳至 CMB Main Server.
                                 # if not 'action' in json_data:           # JSON 'send', OK 由 CMB Main Server 回傳
@@ -2639,29 +3007,27 @@ class WebSocketServer:
                                 # 至 CMB Main Server
                                 # print(f"handle_json_cmd_without_reply 傳送至 CMB Main Server: {json_data}!!!")
                                 try:
-                                    await self.ws_client.send(json.dumps(json_data), "HJCWOR")      # async def send(
+                                    await self.ws_CmbWebSocketClient.send(json.dumps(json_data), "HJCWOR")      # async def send(
                                     if json_data.get('action') == 'login':      # 顯示 login 耗時
                                         # print(f"\nLogin JSON,{caller_id},{ws_type} 耗時:{time.time() - HJCWOR_start}")
                                         pass
                                     return
                                 except Exception as e:
-                                    logging.error(
-                                        f"handle_json_cmd_without_reply 傳送資料至 CMB Main Server 時發生錯誤: {e}")
+                                    logging.error(f"handle_json_cmd_without_reply 傳送資料至 CMB Main Server 時發生錯誤: {e}")
                                     raise
 
                             except Exception as e:
-                                logging.error(
-                                    f"handle_json_cmd_without_reply,{action} 傳送至Server失敗:(嘗試 {attempt+1}/{max_retries}): {e}, {json.dumps(json_data)} ")
+                                logging.error(f"handle_json_cmd_without_reply,{action} 傳送至Server失敗:(嘗試 {attempt+1}/{max_retries}): {e}, {json.dumps(json_data)} ")
                                 # traceback.print_exc()
                                 if attempt < max_retries - 1:
                                     await asyncio.sleep(retry_delay)
                                 continue
             except Exception as e:
                 logging.error(f"handle_json_cmd_without_reply 獲取鎖時發生錯誤: {e}")
-                await websocket.send("Fail, 004:伺服器忙碌中")
+                await self.send_to_websocket(websocket, "Fail, 004:伺服器忙碌中")
         except Exception as e:
             logging.error(f"handle_json_cmd_without_reply 發生未捕捉錯誤: {e}")
-            await websocket.send("Fail, 002:伺服器內部錯誤")
+            await self.send_to_websocket(websocket, "Fail, 002:伺服器內部錯誤")
 
     async def handle_json_cmd_with_reply(self, caller_id, json_data, websocket):
         try:
@@ -2679,19 +3045,20 @@ class WebSocketServer:
                         if attempt >= 1:
                             print(
                                 f"handle_json_cmd_with_reply Retry,{action} {attempt+1}/{max_retries}")
-                        if self.ws_client:
+                        if self.ws_CmbWebSocketClient:
                             try:
                                 # 至 CMB Main Server
                                 # print(f"handle_json_cmd_with_reply 傳送至 CMB Main Server:{json_data}")
-                                await self.ws_client.send(json.dumps(json_data), "HJCWR")   # async def send(
+                                await self.ws_CmbWebSocketClient.send(json.dumps(json_data), "HJCWR")   # async def send(
                                 # 等待回應
                                 # print('handle_json_cmd_with_reply 等待回應')
                                 start_time = time.time()
                                 cmb_msg = []
                                 while not cmb_msg and time.time() - start_time < self.server_timeout:       # x 秒
                                     try:
-                                        cmb_msg = manager.search_data(
-                                            lambda x: x.get('action') in client_wait_reply_actions_check)   # 抓資料至此處理
+                                        cmb_msg = await manager.search_data(
+                                            # 抓資料至此處理
+                                            lambda x: x.get('action') in client_wait_reply_actions_check)
                                         if cmb_msg:
                                             # print(f'找到資料{action}:{cmb_msg}')
                                             break
@@ -2707,7 +3074,7 @@ class WebSocketServer:
 
                                 if cmb_msg:             # Caller, JSON, 收到 CMB Main Server 回覆
                                     try:
-                                        manager.remove_matched(
+                                        await manager.remove_matched(
                                             cmb_msg)     # 移除已匹配資料
                                         clients = await client_manager.get_all_clients()
                                         # print(f'handle_json_cmd_with_reply {action} 找到 json 回覆資料:{cmb_msg}')
@@ -2716,7 +3083,7 @@ class WebSocketServer:
                                             # 發送至取號之 Client, 群發時 'action' 不同
                                             # print(f'發送至Client:{json.dumps(cmb_msg[0])}')
                                             # 回覆
-                                            await websocket.send(json.dumps(cmb_msg[0]))
+                                            await self.send_to_websocket(websocket, (cmb_msg[0]))
                                             # print(f'不發送至 USER 的裝置:{cmb_msg} ', flush=True)
                                             # logging.info(f"群發訊息至 SOFT cmb-caller 的 caller_id={caller_id}: {cmb_msg}")
                                             # 只發到店家, 2025/08/01 改
@@ -2725,14 +3092,14 @@ class WebSocketServer:
                                             # 發送至取號之 Client
                                             print(
                                                 f'\nweb_cancel_get_num 發送至 Client:{json.dumps(cmb_msg[0])}')
-                                            # await websocket.send(json.dumps(cmb_msg[0]))    # 回覆
+                                            # await self.send_to_websocket(websocket,(cmb_msg[0]))    # 回覆
                                             # 發到全部店家
                                             await client_manager.notify_clients(caller_id, f'{json.dumps(cmb_msg[0])}', (0x2+0x4))
                                         elif action == 'remove_number':
                                             # 發送至取號之 Client
                                             print(
                                                 f'\nremove_number 發送至 Client:{json.dumps(cmb_msg[0])}')
-                                            # await websocket.send(json.dumps(cmb_msg[0]))    # 回覆
+                                            # await self.send_to_websocket(websocket,(cmb_msg[0]))    # 回覆
                                             # 發到全部店家
                                             await client_manager.notify_clients(caller_id, f'{json.dumps(cmb_msg[0])}', (0x2+0x4))
                                         else:   # get_num_status & get_num_info, 只回覆不廣播
@@ -2742,7 +3109,7 @@ class WebSocketServer:
                                                 # await client_manager.update_caller_info(caller_id, cmb_msg[0].get('call_num'))
 
                                                 print(
-                                                    f"叫號機 {caller_id} 收到 'get_num_info' call_num={cmb_msg[0].get('call_num')}", flush=True)
+                                                    f"叫號機 {caller_id} 收到 'get_num_info' call_num='{cmb_msg[0].get('call_num')}'", flush=True)
 
                                                 # 防止 caller_id 不存在或 caller_num 欄位缺失
                                                 caller_num = clients.get(
@@ -2773,9 +3140,9 @@ class WebSocketServer:
                                                 # 發送至詢問之 Client
                                                 # print(f'發送至Client:{json.dumps(cmb_msg[0], ensure_ascii=False)}')
                                                 # 回覆
-                                                await websocket.send(json.dumps(cmb_msg[0]))
+                                                await self.send_to_websocket(websocket, (cmb_msg[0]))
                                             except Exception as e:
-                                                logging.info(
+                                                logging.warning(
                                                     f"handle_json_cmd_with_reply 回覆至 {action} caller 發生錯誤!  error: {e}, {caller_id}: {cmb_msg}")
                                         return
                                     except Exception as e:
@@ -2794,10 +3161,18 @@ class WebSocketServer:
                                 continue
             except Exception as e:
                 logging.error(f"handle_json_cmd_with_reply 獲取鎖時發生錯誤: {e}")
-                await websocket.send("Fail, 003:伺服器忙碌中")
+                await self.send_to_websocket(websocket, "Fail, 003:伺服器忙碌中")
+
+        # except Exception as e:
+        #     logging.error(f"handle_json_cmd_with_reply 發生未捕捉錯誤: {e}")
+        #     await self.send_to_websocket(websocket, "Fail, 002:伺服器內部錯誤")
+        except asyncio.TimeoutError as e:
+            await ErrorHandler.handle_websocket_error(websocket, e, "handle_json_cmd_with_reply")
+        except ConnectionError as e:
+            await ErrorHandler.handle_websocket_error(websocket, e, "handle_json_cmd_with_reply")
         except Exception as e:
-            logging.error(f"handle_json_cmd_with_reply 發生未捕捉錯誤: {e}")
-            await websocket.send("Fail, 002:伺服器內部錯誤")
+            logging.error(f"未預期錯誤: {e}", exc_info=True)
+            await ErrorHandler.handle_websocket_error(websocket, e, "handle_json_cmd_with_reply")
 
     # Caller, 會等待, CSV
     # get_cmd True -> get
@@ -2805,9 +3180,9 @@ class WebSocketServer:
         # async with self.ws_device_lock:  # 使用鎖來確保一次只有一個驗證過程
         async with self.ws_device_lock.acquire(f'ws_device_lock CSV get_num_info:{caller_id}'):
             if len(parts) != 2:
-                logging.info("無效的 get_num_info 格式!")
+                logging.warning("無效的 get_num_info 格式!")
                 # 至 caller
-                await websocket.send("Fail, 006:無效的CMD指令")
+                await self.send_to_websocket(websocket, "Fail, 006:無效的CMD指令")
                 return
 
             max_retries = 6
@@ -2826,22 +3201,22 @@ class WebSocketServer:
 
                 # Try Block added for reconnection logic or error handling
                 try:
-                    if not self.ws_client:
-                        print('handle_get_num_info: ws_client 已斷線!')
-                        # 這裡可以嘗試重連 ws_client，或直接跳過
+                    if not self.ws_CmbWebSocketClient:
+                        print('handle_get_num_info: ws_cmb_client 已斷線!')
+                        # 這裡可以嘗試重連 ws_cmb_client，或直接跳過
                         pass
                     else:
                         try:
-                            # print(f'ws_client.send: {json.dumps(send_data)}')
+                            # print(f'ws_cmb_client.send: {json.dumps(send_data)}')
                             # 至 CMB Main Server
-                            await self.ws_client.send(json.dumps(send_data), "handle_get_num_info")    # async def send(
+                            await self.ws_CmbWebSocketClient.send(json.dumps(send_data), "handle_get_num_info")    # async def send(
                             # 等待回應
                             start_time = time.time()
-                            self.ws_client.cmb_msg = ''
+                            self.ws_CmbWebSocketClient.cmb_msg = ''
 
                             cmb_msg = []
                             while not cmb_msg and time.time() - start_time < self.server_timeout:
-                                cmb_msg = manager.search_data(
+                                cmb_msg = await manager.search_data(
                                     lambda x: x.get('action') == "get_num_info")
                                 if cmb_msg:
                                     # print(f'找到資料:{found_data}')
@@ -2852,13 +3227,13 @@ class WebSocketServer:
                                 await asyncio.sleep(0.001)
 
                             # print(f'handle_get_num_info 找到資料:{cmb_msg}')
-                            manager.remove_matched(cmb_msg)     # 移除已匹配資料
+                            await manager.remove_matched(cmb_msg)     # 移除已匹配資料
                             # cmb_msg = json.dumps(cmb_msg)
                             if cmb_msg:
                                 # response = json.loads(cmb_msg)
                                 response = dict(cmb_msg[0])
-                                # if self.ws_client.cmb_msg:
-                                #     response = json.loads(self.ws_client.cmb_msg)
+                                # if self.ws_CmbWebSocketClient.cmb_msg:
+                                #     response = json.loads(self.ws_CmbWebSocketClient.cmb_msg)
                                 if response.get("result") == "OK":
                                     call_num = response.get("call_num", '')
                                     wait_num = response.get('wait_num', '')
@@ -2879,23 +3254,23 @@ class WebSocketServer:
                                     try:
                                         if get_cmd:     # get
                                             # print(f"get:OK,{caller_id},{call_num},get")
-                                            await websocket.send(f"OK,{caller_id},{call_num},get")
+                                            await websocket.send_text(f"OK,{caller_id},{call_num},get")
                                         else:
                                             # print(f"get_num_info:OK,{caller_id},{curr_get_num},{wait_num},get_num_info")
-                                            await websocket.send(f"OK,{caller_id},{curr_get_num},{wait_num},get_num_info")
+                                            await websocket.send_text(f"OK,{caller_id},{curr_get_num},{wait_num},get_num_info")
                                         return
                                     except Exception as e:
                                         logging.error(
                                             f"handle_get_num_info 回傳至 Caller 失敗: {e}")
                                         # 可以選擇回傳錯誤訊息或忽略
-                                        # await websocket.send("Fail, 999:發送結果失敗")
+                                        # await self.send_to_websocket(websocket, "Fail, 999:發送結果失敗")
                                         return
                                     # if get_cmd:
                                     #     # print(f"get:OK,{caller_id},{call_num},get")
-                                    #     await websocket.send(f"OK,{caller_id},{call_num},get")
+                                    #     await websocket.send_text(f"OK,{caller_id},{call_num},get")
                                     # else:
                                     #     # print(f"get_num_info:OK,{caller_id},{curr_get_num},{wait_num},get_num_info")
-                                    #     await websocket.send(f"OK,{caller_id},{curr_get_num},{wait_num},get_num_info")
+                                    #     await websocket.send_text(f"OK,{caller_id},{curr_get_num},{wait_num},get_num_info")
                                     # return
                                 else:
                                     # 處理錯誤回應
@@ -2911,17 +3286,18 @@ class WebSocketServer:
                                     # 至 caller
                                     try:
                                         if get_cmd:
-                                            await websocket.send(f"Fail, {msg},get")
-                                            logging.error(f"{caller_id}, Fail, {msg},get")
+                                            await websocket.send_text(f"Fail, {msg},get")
+                                            logging.error(
+                                                f"{caller_id}, Fail, {msg},get")
                                         else:
-                                            await websocket.send(f"Fail, {msg},get_num_info")
+                                            await websocket.send_text(f"Fail, {msg},get_num_info")
                                             logging.error(f"{caller_id}, Fail, {msg},get_num_info")
                                         return
                                     except Exception as e:
                                         logging.error(
                                             f"handle_get_num_info 回傳至 Caller 失敗: {e}")
                                         # 可以選擇回傳錯誤訊息或忽略
-                                        # await websocket.send("Fail, 999:發送結果失敗")
+                                        # await self.send_to_websocket(websocket, "Fail, 999:發送結果失敗")
                                         return
                             else:
                                 print(
@@ -2940,141 +3316,149 @@ class WebSocketServer:
                     continue
 
             # # 至 caller ???
-            # await websocket.send("Fail, 001:不支援此功能,auth")
+            # await self.send_to_websocket(websocket, "Fail, 001:不支援此功能,auth")
 
     async def handle_auth(self, caller_id, parts, websocket):       # Caller CSV
         """處理驗證請求"""
-        # login_start = time.time()
-        # print(f'handle_auth:{parts} ', end='', flush=True)
-        # async with self.ws_device_lock:  # 使用鎖來確保一次只有一個驗證過程
-        async with self.ws_device_lock.acquire(f'ws_device_lock CSV auth:{caller_id}'):
-
-            # print(f'{caller_id},處理驗證請求')
-            if len(parts) != 3:
-                logging.info("無效的驗證格式!")
-                await websocket.send("Fail, 004:無效的驗證格式")   # 至 Caller
+        try:
+            # login_start = time.time()
+            # print(f'handle_auth:{parts} ', end='', flush=True)
+            # async with self.ws_device_lock:  # 使用鎖來確保一次只有一個驗證過程
+            async with self.ws_device_lock.acquire(f'ws_device_lock CSV auth:{caller_id}'):
+    
+                # print(f'{caller_id},處理驗證請求')
+                if len(parts) != 3:
+                    logging.warning("無效的驗證格式!")
+                    # 至 Caller
+                    await self.send_to_websocket(websocket, "Fail, 004:無效的驗證格式")
+                    return False
+    
+                encrypted_password = parts[2]
+                max_retries = 6
+                retry_delay = 1
+    
+                for attempt in range(max_retries):
+                    if attempt >= 1:
+                        print(f'handle_auth Retry {attempt+1}/{max_retries}')
+                    send_data = {
+                        'action': 'login',                  # CSV
+                        "vendor_id": self.vendor_id,
+                        "caller_id": caller_id,
+                        "password": encrypted_password,
+                        # "uuid": 'CSV'
+                        'uuid': 'CSV_' + hex(id(websocket))
+                    }
+    
+                    if self.ws_CmbWebSocketClient:                  # CSV
+                        try:
+                            # start_time = time.time()
+                            ws_type = -1
+                            # ASTRO_cmb-caller
+                            if (encrypted_password == 'liM3yMfrMIAWHmFVvGQ1RA3BmdCTx2/hHdFbzv7ulcQ='):  # H/W Caller
+                                try:
+                                    print(
+                                        f'\n*** H/W CMB Caller:{caller_id} login_C *** ', end='', flush=True)
+                                    clients = await client_manager.get_all_clients()
+                                    existing_num = clients.get(
+                                        caller_id, {}).get('caller_num', -1)
+    
+                                    # 嘗試轉換為整數，若失敗則設為 0 並記錄錯誤
+                                    try:
+                                        current_num = int(existing_num)
+                                    except ValueError:
+                                        # print(
+                                        #     f"[ERROR] caller_num 轉換失敗，值為: '{existing_num}'，caller_id: {caller_id}")
+                                        logging.error(
+                                            f"1_轉換客戶端 {caller_id} existing_num={existing_num} 為整數時發生錯誤: {ValueError}")
+                                        current_num = -1
+    
+                                    # 製造一個 CMB Main Server 回傳資訊
+                                    # json_cmb_msg = (
+                                    #     f'{{'action':"login","vendor_id":"tawe","caller_id":"{caller_id}",'
+                                    #     f'"uuid":"Null","caller_name":"{caller_id}_caller","curr_num":"{current_num}",'
+                                    #     f'"result":"OK"}}'
+                                    # )
+    
+                                    # H/W CMB Caller 暫不使用 , !!!@@@
+                                    # connect_time = 0
+                                    # if(self.server_connection_monitor.last_connect_time >= self.server_connection_monitor.last_disconnect_time):
+                                    #     connect_time = time.time() - self.server_connection_monitor.last_connect_time
+                                    # else:
+                                    #     connect_time = -(time.time() - self.server_connection_monitor.last_disconnect_time)
+                                    # if connect_time >= 0 :
+                                    #     print(f"login 已連線{connect_time}秒(CSVauth)")
+                                    # else:
+                                    #     print(f"login 已斷線{-connect_time}秒(CSV auth)")
+                                    # if connect_time <= -10 :     # 超過時間就不讓連線
+                                    #     logging.info(f"server 斷線中_2! ({caller_id},CSV auth) ")
+                                    #     cmb_msg = {             # 設定叫號機
+                                    #         'action': 'login',                  # CSV
+                                    #         "vendor_id": self.vendor_id,
+                                    #         "caller_id": caller_id,
+                                    #         "password": encrypted_password,
+                                    #         'uuid': 'CSV_' + hex(id(websocket)),
+                                    #         'curr_num': current_num,
+                                    #         'result': 'Fail, 005:disconnected from the center'
+                                    #     }
+                                    #     # json_cmb_msg = json.dumps(cmb_msg)
+                                    #     # await manager.add_data(json_cmb_msg)      # 存入預設固定訊息
+                                    #     await ws_fe_server.ws_CmbWebSocketClient.generate_simulation_message(cmb_msg)
+                                    #     return
+    
+                                    if (current_num < 0):   #
+                                        print(
+                                            f"current_num 值錯誤:{current_num}", flush=True)
+                                        pass
+                                    ws_type = 1
+                                    await login_buffer.add(websocket, ws_type)
+    
+                                    cmb_msg = {             # 設定叫號機
+                                        'action': 'login',                  # CSV
+                                        "vendor_id": self.vendor_id,
+                                        "caller_id": caller_id,
+                                        "password": encrypted_password,
+                                        'uuid': 'CSV_' + hex(id(websocket)),
+                                        'curr_num': current_num,
+                                        'result': 'OK'
+                                    }
+                                    # json_cmb_msg = json.dumps(cmb_msg)
+                                    # await manager.add_data(json_cmb_msg)      # 存入預設固定訊息
+                                    await ws_fe_server.ws_CmbWebSocketClient.generate_simulation_message(cmb_msg)
+                                except Exception as e:
+                                    print(f"[EXCEPTION] 處理 CMB Caller 時發生錯誤: {e}")
+                            else:       # 至 CMB Main Server
+                                # 至 CMB Main Server
+                                if encrypted_password == 'user_get_num':
+                                    print(
+                                        f'\n*** user_get_num:{caller_id} login_C *** ', end='', flush=True)
+                                    ws_type = 4
+                                else:
+                                    print(
+                                        f'\n*** SOFT CMB Caller:{caller_id} login_C *** ', end='', flush=True)
+                                    ws_type = 2
+    
+                                await login_buffer.add(websocket, ws_type)
+                                await self.ws_CmbWebSocketClient.send(json.dumps(send_data), "login_C")    # async def send(
+    
+                            # print(f"\nLogin CSV,{caller_id},{ws_type} 耗時:{time.time() - login_start}")
+                            return True
+    
+                        except Exception as e:
+                            logging.error(
+                                f"handle_auth 傳送至Server失敗:(嘗試 {attempt+1}/{max_retries}): {e}, {caller_id}, ws_cmb_client.cmb_msg:{self.ws_CmbWebSocketClient.cmb_msg}")
+                            # traceback.print_exc()
+                            # print(
+                            #     f'self.ws_CmbWebSocketClient.cmb_msg:{self.ws_CmbWebSocketClient.cmb_msg}')
+                            if attempt < max_retries - 1:
+                                await asyncio.sleep(retry_delay)
+                            continue
+                # 至 Caller
+                await self.send_to_websocket(websocket, "Fail, 001:驗證失敗,auth")
                 return False
 
-            encrypted_password = parts[2]
-            max_retries = 6
-            retry_delay = 1
-
-            for attempt in range(max_retries):
-                if attempt >= 1:
-                    print(f'handle_auth Retry {attempt+1}/{max_retries}')
-                send_data = {
-                    'action': 'login',                  # CSV
-                    "vendor_id": self.vendor_id,
-                    "caller_id": caller_id,
-                    "password": encrypted_password,
-                    # "uuid": 'CSV'
-                    'uuid': 'CSV_' + hex(id(websocket))
-                }
-
-                if self.ws_client:                  # CSV
-                    try:
-                        # start_time = time.time()
-                        ws_type = -1
-                        # ASTRO_cmb-caller
-                        if (encrypted_password == 'liM3yMfrMIAWHmFVvGQ1RA3BmdCTx2/hHdFbzv7ulcQ='):  # H/W Caller
-                            try:
-                                print(
-                                    f'\n*** H/W CMB Caller:{caller_id} login_C *** ', end='', flush=True)
-                                clients = await client_manager.get_all_clients()
-                                existing_num = clients.get(
-                                    caller_id, {}).get('caller_num', -1)
-
-                                # 嘗試轉換為整數，若失敗則設為 0 並記錄錯誤
-                                try:
-                                    current_num = int(existing_num)
-                                except ValueError:
-                                    # print(
-                                    #     f"[ERROR] caller_num 轉換失敗，值為: '{existing_num}'，caller_id: {caller_id}")
-                                    logging.error(
-                                        f"1_轉換客戶端 {caller_id} existing_num={existing_num} 為整數時發生錯誤: {ValueError}")
-                                    current_num = -1
-
-                                # 製造一個 CMB Main Server 回傳資訊
-                                # json_cmb_msg = (
-                                #     f'{{'action':"login","vendor_id":"tawe","caller_id":"{caller_id}",'
-                                #     f'"uuid":"Null","caller_name":"{caller_id}_caller","curr_num":"{current_num}",'
-                                #     f'"result":"OK"}}'
-                                # )
-
-                                # H/W CMB Caller 暫不使用 , !!!@@@
-                                # connect_time = 0
-                                # if(self.server_connection_monitor.last_connect_time >= self.server_connection_monitor.last_disconnect_time):
-                                #     connect_time = time.time() - self.server_connection_monitor.last_connect_time
-                                # else:
-                                #     connect_time = -(time.time() - self.server_connection_monitor.last_disconnect_time)
-                                # if connect_time >= 0 :
-                                #     print(f"login 已連線{connect_time}秒(CSVauth)")
-                                # else:
-                                #     print(f"login 已斷線{-connect_time}秒(CSV auth)")
-                                # if connect_time <= -10 :     # 超過時間就不讓連線
-                                #     logging.info(f"server 斷線中_2! ({caller_id},CSV auth) ")
-                                #     cmb_msg = {             # 設定叫號機
-                                #         'action': 'login',                  # CSV
-                                #         "vendor_id": self.vendor_id,
-                                #         "caller_id": caller_id,
-                                #         "password": encrypted_password,
-                                #         'uuid': 'CSV_' + hex(id(websocket)),
-                                #         'curr_num': current_num,
-                                #         'result': 'Fail, 005:disconnected from the center'
-                                #     }
-                                #     # json_cmb_msg = json.dumps(cmb_msg)
-                                #     # manager.add_data(json_cmb_msg)      # 存入預設固定訊息
-                                #     await ws_server.ws_client.generate_mock_message(cmb_msg)
-                                #     return
-
-                                if (current_num < 0):   #
-                                    print(
-                                        f"current_num 值錯誤:{current_num}", flush=True)
-                                    pass
-                                ws_type = 1
-                                await login_buffer.add(websocket, ws_type)
-
-                                cmb_msg = {             # 設定叫號機
-                                    'action': 'login',                  # CSV
-                                    "vendor_id": self.vendor_id,
-                                    "caller_id": caller_id,
-                                    "password": encrypted_password,
-                                    'uuid': 'CSV_' + hex(id(websocket)),
-                                    'curr_num': current_num,
-                                    'result': 'OK'
-                                }
-                                # json_cmb_msg = json.dumps(cmb_msg)
-                                # manager.add_data(json_cmb_msg)      # 存入預設固定訊息
-                                await ws_server.ws_client.generate_mock_message(cmb_msg)
-                            except Exception as e:
-                                print(f"[EXCEPTION] 處理 CMB Caller 時發生錯誤: {e}")
-                        else:       # 至 CMB Main Server
-                            # 至 CMB Main Server
-                            if encrypted_password == 'user_get_num':
-                                print(
-                                    f'\n*** user_get_num:{caller_id} login_C *** ', end='', flush=True)
-                                ws_type = 4
-                            else:
-                                print(
-                                    f'\n*** SOFT CMB Caller:{caller_id} login_C *** ', end='', flush=True)
-                                ws_type = 2
-
-                            await login_buffer.add(websocket, ws_type)
-                            await self.ws_client.send(json.dumps(send_data), "login_C")    # async def send(
-
-                        # print(f"\nLogin CSV,{caller_id},{ws_type} 耗時:{time.time() - login_start}")
-                        return True
-
-                    except Exception as e:
-                        logging.error(
-                            f"handle_auth 傳送至Server失敗:(嘗試 {attempt+1}/{max_retries}): {e}, {caller_id}, ws_client.cmb_msg:{self.ws_client.cmb_msg}")
-                        # traceback.print_exc()
-                        # print(
-                        #     f'self.ws_client.cmb_msg:{self.ws_client.cmb_msg}')
-                        if attempt < max_retries - 1:
-                            await asyncio.sleep(retry_delay)
-                        continue
-            await websocket.send("Fail, 001:驗證失敗,auth")      # 至 Caller
+        except Exception as e:
+            logging.error(f"驗證處理失敗: {e}")
+            await self.send_to_websocket(websocket, "Fail, 999:系統錯誤")
             return False
 
     async def force_close_connection(self, websocket, caller_id, reason):       # Caller
@@ -3162,7 +3546,7 @@ class WebSocketServer:
                 # print(f'C_傳至 CMB Main Server 修補資料:{data} ', end='', flush=True)
 
                 # 2. 檢查WebSocket連接
-                if not self.ws_client or not self.ws_client.connect:
+                if not self.ws_CmbWebSocketClient or not self.ws_CmbWebSocketClient.connect:
                     logging.error("WebSocket連接不可用")
                     await asyncio.sleep(retry_delay)
                     continue
@@ -3170,7 +3554,7 @@ class WebSocketServer:
                 # 3. 發送消息
                 try:
                     # 至 CMB Main Server
-                    await self.ws_client.send(json.dumps(data), 'SEND')     # async def send(
+                    await self.ws_CmbWebSocketClient.send(json.dumps(data), 'SEND')     # async def send(
                     # logging.info(f"成功發送消息至CMB: caller_id={caller_id}, call_num={call_num}")
                 except Exception as send_error:
                     # logging.error(f"發送消息失敗: {send_error}")
@@ -3186,9 +3570,9 @@ class WebSocketServer:
                 response_received = False
 
                 while not response_received and (time.time() - start_time) < timeout:
-                    if self.ws_client.cmb_msg:
-                        response = f"{self.ws_client.cmb_msg}"
-                        self.ws_client.cmb_msg = ''  # 重置消息
+                    if self.ws_CmbWebSocketClient.cmb_msg:
+                        response = f"{self.ws_CmbWebSocketClient.cmb_msg}"
+                        self.ws_CmbWebSocketClient.cmb_msg = ''  # 重置消息
                         # logging.info(f"收到CMB回應: {response}")
                         return response
 
@@ -3201,8 +3585,9 @@ class WebSocketServer:
             except json.JSONDecodeError as json_error:
                 logging.error(f"JSON編碼錯誤: {json_error}")
 
-            except websockets.exceptions.ConnectionClosed as conn_error:
-                logging.error(f"WebSocket連接已關閉: {conn_error}")
+            # except websockets.exceptions.ConnectionClosed as conn_error:
+            except WebSocketDisconnect:  # FastAPI 的斷線異常
+                logging.error("WebSocket連接已關閉: WebSocketDisconnect")
                 # 這裡可以添加重新連接邏輯
 
             except asyncio.TimeoutError:
@@ -3223,200 +3608,243 @@ class WebSocketServer:
             f"達到最大重試次數({max_retries})，放棄處理 caller_id={caller_id}, call_num={call_num}")
         return None
 
-
 async def periodic_send_frame(ws_server_l):     # 發送例行資料
-    global ws_server, periodic_pass
+    global ws_fe_server, periodic_pass
     """定期發送狀態和清理無效連接"""
-    await asyncio.sleep(30)
-    while True:
-        # print("發送例行資料_0: ", end='', flush=True)
-        start_time = datetime.now()
+    try:
+        print("periodic_send_frame", flush=True)
+        await asyncio.sleep(30)
+        
+        while True:
+            try:
+                # print("發送例行資料_0: ", end='', flush=True)
+                start_time = datetime.now()
 
-        # 清理無效連接
-        await client_manager.cleanup()  # 清理長時間無連接的caller記錄
-
-        # 定時清除斷線之Client !!!@@@
-        clients = await client_manager.get_all_clients()
-        # async with client_manager.lock:     # !!!@@@ **************
-        # async with nullcontext():  # 替代鎖，但不實際加鎖
-        if True:
-            disconnected = set()
-            # total_websockets = sum(len(client['connections'])
-            #                        for client in clients.values())
-            # print(f'定時清除斷線之Client:現有 {total_websockets} 個連線中 Client')
-            for caller_id, client_info in clients.items():
-                # print(f"Caller ID: {caller_id}")
-                # for websocket, ws_type in client_info['connections'].items():
-                for websocket, info in client_info['connections'].items():
-                    ws_type = info['ws_type']
-                    # print(f"  WebSocket: {websocket}, Type: {ws_type}")
-                    # print(f"  WebSocket:{ websocket.open }")
-                    if not websocket.open:
-                        print(f'\n3_discard{websocket}:{caller_id}',
-                              end='\n', flush=True)
-                        disconnected.add((caller_id, websocket))
-            # print("發送例行資料_1: ", end='', flush=True)
-            for caller_id, websocket in disconnected:       # 巡查時發現
-                print(next((
-                    f"\n2_discard: {caller_id},{ws}, 类型: {info['ws_type']}"
-                    for ws, info in clients[caller_id]['connections'].items()
-                    if ws == websocket
-                ), "未找到 websocket"), flush=True)
-                await client_manager.remove_connection(caller_id, websocket)
-        # print("發送例行資料_2: ", end='', flush=True)
-        # 發送狀態更新
-        clients = await client_manager.get_all_clients()
-        active_client = 0
-        connected_client = 0
-        # print("發送例行資料_3: ", end='', flush=True)
-        print("", flush=True)
-        # Logger.log("發送例行資料:")
-        # print('發送例行資料:', end='\n', flush=True)
-
-        if ws_server == None or periodic_pass:
-            if ws_server == None:
-                print(f"#{os.getenv('K_REVISION', 'local')} 發送例行資料:",
-                      end=' ', flush=True)
-                print(" Websocket Server 早已關閉!\n", flush=True)
-            if periodic_pass:
-                print(" 略過此次發送!\n", flush=True)
-        else:
-            print(f"#{os.getenv('K_REVISION', 'local')} 發送例行資料:",
-                  end='\n', flush=True)
-            print('例行資料 : ', end='', flush=True)
-            issue = False
-            for caller_id, info in clients.items():
+                # 清理無效連接
                 try:
-                    is_connected = bool(info['connections'])
+                    await client_manager.cleanup()  # 清理長時間無連接的caller記錄
+                except Exception as cleanup_error:
+                    logging.error(f"清理無效連接時發生錯誤: {cleanup_error}")
 
-                    # 添加對 disconnect_time 的檢查
-                    disconnect_time = info.get('disconnect_time')
-                    if disconnect_time is None:
-                        is_active = True
-                    else:
+                # 定時清除斷線之Client
+                try:
+                    clients = await client_manager.get_all_clients()
+                except Exception as get_clients_error:
+                    logging.error(f"獲取客戶端列表時發生錯誤: {get_clients_error}")
+                    clients = {}
+
+                disconnected = set()
+                
+                try:
+                    for caller_id, client_info in clients.items():
                         try:
-                            time_diff = (datetime.now() -
-                                         disconnect_time).total_seconds()
-                            is_active = time_diff < 600  # 有效連線(斷線10分鐘內)
-                        except TypeError:
-                            # 如果 disconnect_time 不是有效的 datetime 對象
-                            is_active = True
-                            print(f"{caller_id}的disconnect_time格式錯誤  ",
-                                  end='', flush=True)
+                            connections = client_info.get('connections', {})
+                            for websocket, info in connections.items():
+                                try:
+                                    ws_type = info['ws_type']
+                                    # 安全的 WebSocket 狀態檢查
+                                    if hasattr(websocket, 'client_state'):
+                                        if websocket.client_state != WebSocketState.CONNECTED:
+                                            print(f'\n3_discard{websocket}:{caller_id}', end='\n', flush=True)
+                                            disconnected.add((caller_id, websocket))
+                                    else:
+                                        # 如果沒有 client_state 屬性，使用其他檢查方法
+                                        logging.warning(f"WebSocket 沒有 client_state 屬性: {caller_id}")
+                                        # 這裡可以添加其他狀態檢查邏輯
+                                        
+                                except Exception as ws_error:
+                                    logging.error(f"檢查 WebSocket 狀態時發生錯誤 (caller_id: {caller_id}): {ws_error}")
+                                    # 如果檢查失敗，認為連接已斷開
+                                    disconnected.add((caller_id, websocket))
+                        except Exception as client_error:
+                            logging.error(f"處理客戶端 {caller_id} 時發生錯誤: {client_error}")
+                except Exception as loop_error:
+                    logging.error(f"遍歷客戶端時發生錯誤: {loop_error}")
 
-                    if is_connected:
-                        connected_client += 1
-                    if is_active:
-                        active_client += 1
-
-                        def calculate_last_update(is_connected, disconnect_time):
-                            if is_connected:
-                                return 0
-                            if disconnect_time is None:
-                                return 1  # 預設值，代表「未知斷線時間」
-                            try:
-                                time_since_disconnect = datetime.now() - disconnect_time
-                                minutes_offline = max(
-                                    0, int(time_since_disconnect.total_seconds() / 60))
-                                return minutes_offline + 1
-                            except TypeError:
-                                return 1  # 如果時間格式錯誤，返回預設值
-                            # -------------------------------------
-
-                        # 如錯誤或無值則設0 , !!!@@@
-                        # caller_num_str = info.get('caller_num', '0')
-                        # caller_num_str = info.get('caller_num') or '0'
-                        # caller_num_str = info.get('caller_num') or ''
-                        # 明確處理 None 情況，但保留 0
-                        caller_num = info.get('caller_num')
-                        caller_num_str = str(
-                            caller_num) if caller_num is not None else ''
-
-                        # 發送更新到CMB主伺服器
-                        data = {
-                            "vendor_id": "tawe",
-                            "caller_id": caller_id,
-                            # "call_num": info['caller_num'],
-                            "call_num": caller_num_str,
-                            "change": not is_connected,
-                            "last_update": calculate_last_update(is_connected, info.get('disconnect_time')),
-                            # frontend 之 ID
-                            "uuid": hex(id(ws_server.ws_client))
-                        }
-
-                        # 這裡輸出 - 添加完整的錯誤處理
-                        # caller_num_str = info.get('caller_num', '')
-                        if not caller_num_str:  # 檢查是否為空字串
-                            print(f"{caller_id},空值  ", end='',
-                                  flush=True)  #
-                            if run_mode == 'Trial':
-                                print(f"info:{info}")
-                            continue
-
+                # 清理斷開的連接
+                try:
+                    for caller_id, websocket in disconnected:
                         try:
-                            caller_num = int(caller_num_str)
-                            if caller_num < 0:
-                                print(f"{caller_id},資料無效:{caller_num}  ",
-                                      end='', flush=True)
+                            # 查找連接資訊
+                            connection_info = None
+                            if caller_id in clients and websocket in clients[caller_id].get('connections', {}):
+                                connection_info = clients[caller_id]['connections'][websocket]
+                            
+                            if connection_info:
+                                ws_type = connection_info.get('ws_type', '未知')
+                                print(f"\n2_discard: {caller_id},{websocket}, 类型: {ws_type}", flush=True)
                             else:
-                                print(
-                                    f'{data["caller_id"]},{data["call_num"]},{data["change"]},{data["last_update"]}  ', end='', flush=True)
-                                # 至 CMB Main Server
-                                await ws_server.ws_client.send(json.dumps(data), 'MINUTE')
-                        except (ValueError, TypeError) as num_error:
-                            print(
-                                f"{caller_id},資料無效:無法轉換為數字 '{caller_num_str}'  ", end='', flush=True)
-                            continue
+                                print(f"\n2_discard: {caller_id},{websocket}, 类型: 未知", flush=True)
+                            
+                            await client_manager.remove_connection(caller_id, websocket)
+                        except Exception as remove_error:
+                            logging.error(f"移除連接時發生錯誤 (caller_id: {caller_id}): {remove_error}")
+                except Exception as cleanup_loop_error:
+                    logging.error(f"清理斷開連接時發生錯誤: {cleanup_loop_error}")
 
-                except Exception as e:
-                    # 這裡捕獲其他可能的異常
-                    logging.error(f"處理客戶端 {caller_id} 時發生錯誤: {e}")
-                    logging.info(f"發送例行資料 傳送至Server失敗:{e}, 10秒後繼續發送例行資料!!!")
-                    # 出錯後將 start_time 設為xx秒前
-                    start_time = datetime.now() - timedelta(seconds=(60-10))
-                    issue = True
-                    break   # 離開 for 迴圈
+                # 重新獲取最新的客戶端列表
+                try:
+                    clients = await client_manager.get_all_clients()
+                except Exception as refresh_error:
+                    logging.error(f"重新獲取客戶端列表時發生錯誤: {refresh_error}")
+                    clients = {}
 
-            if not issue:
-                # print("發送例行資料_6: ",end='', flush=True)
+                active_client = 0
+                connected_client = 0
                 print("", flush=True)
-                # 記錄狀態
-                total_websockets = sum(len(client.get('connections', {}))
-                                       for client in clients.values())
-                Logger.log(
-                    f"總共有 {len(clients)} 個紀錄中 ID, "
-                    f"{active_client} 個有效的 ID, "
-                    f"{connected_client} 個連線中 ID, "
-                    f"{total_websockets} 個連線中 Client, "
-                    f"{manager.count_data()} 個 Server 回覆暫存資料"
-                )
 
-                # 使用字典來動態統計各類型數量，避免多個獨立變數
-                type_counts = {1: 0, 2: 0, 4: 0, 8: 0}
+                # 檢查伺服器狀態
+                if ws_fe_server is None or periodic_pass:
+                    if ws_fe_server is None:
+                        print(f"#{os.getenv('K_REVISION', 'local')} 發送例行資料:", end=' ', flush=True)
+                        print(" Websocket Server 早已關閉!\n", flush=True)
+                    if periodic_pass:
+                        print(" 略過此次發送!\n", flush=True)
+                else:
+                    try:
+                        print(f"#{os.getenv('K_REVISION', 'local')} 發送例行資料:", end='\n', flush=True)
+                        print('例行資料 : ', end='', flush=True)
+                        issue = False
+                        
+                        for caller_id, info in clients.items():
+                            try:
+                                is_connected = bool(info.get('connections', {}))
 
-                for caller_id, client_info in clients.items():
-                    connections = client_info.get('connections', {})
-                    for websocket, info in connections.items():
-                        ws_type = info.get('ws_type', 0)
-                        # 使用位元運算檢查所有可能的類型
-                        for type_flag in type_counts.keys():
-                            if ws_type & type_flag:
-                                type_counts[type_flag] += 1
+                                # 添加對 disconnect_time 的檢查
+                                disconnect_time = info.get('disconnect_time')
+                                if disconnect_time is None:
+                                    is_active = True
+                                else:
+                                    try:
+                                        time_diff = (datetime.now() - disconnect_time).total_seconds()
+                                        is_active = time_diff < 600  # 有效連線(斷線10分鐘內)
+                                    except (TypeError, AttributeError) as time_error:
+                                        is_active = True
+                                        print(f"{caller_id}的disconnect_time格式錯誤  ", end='', flush=True)
 
-                # 最終輸出統計結果
-                for type_flag, count in type_counts.items():
-                    print(f"Type_{type_flag}:{count} ", end='', flush=True)
-                # print('', flush=True)
-                # print('-------------------', flush=True)
-                print('\n' + '-' * 40, flush=True)
+                                if is_connected:
+                                    connected_client += 1
+                                if is_active:
+                                    active_client += 1
 
-        # 確保每60秒執行一次
-        execution_time = (datetime.now() - start_time).total_seconds()
-        await asyncio.sleep(max(60 - execution_time, 0))
+                                    def calculate_last_update(is_connected, disconnect_time):
+                                        try:
+                                            if is_connected:
+                                                return 0
+                                            if disconnect_time is None:
+                                                return 1  # 預設值，代表「未知斷線時間」
+                                            try:
+                                                time_since_disconnect = datetime.now() - disconnect_time
+                                                minutes_offline = max(0, int(time_since_disconnect.total_seconds() / 60))
+                                                return minutes_offline + 1
+                                            except (TypeError, AttributeError):
+                                                return 1  # 如果時間格式錯誤，返回預設值
+                                        except Exception as calc_error:
+                                            logging.error(f"計算最後更新時間時發生錯誤: {calc_error}")
+                                            return 1
+
+                                    # 處理 caller_num
+                                    caller_num = info.get('caller_num')
+                                    caller_num_str = str(caller_num) if caller_num is not None else ''
+
+                                    # 發送更新到CMB主伺服器
+                                    data = {
+                                        "vendor_id": "tawe",
+                                        "caller_id": caller_id,
+                                        "call_num": caller_num_str,
+                                        "change": not is_connected,
+                                        "last_update": calculate_last_update(is_connected, info.get('disconnect_time')),
+                                        "uuid": hex(id(ws_fe_server.ws_CmbWebSocketClient))
+                                    }
+
+                                    # 檢查 caller_num 是否有效
+                                    if not caller_num_str:
+                                        print(f"{caller_id},空值  ", end='', flush=True)
+                                        if run_mode == 'Trial':
+                                            print(f"info:{info}")
+                                        continue
+
+                                    try:
+                                        caller_num = int(caller_num_str)
+                                        if caller_num < 0:
+                                            print(f"{caller_id},資料無效:{caller_num}  ", end='', flush=True)
+                                        else:
+                                            print(f'{data["caller_id"]},{data["call_num"]},{data["change"]},{data["last_update"]}  ', end='', flush=True)
+                                            # 至 CMB Main Server
+                                            try:
+                                                await ws_fe_server.ws_CmbWebSocketClient.send(json.dumps(data), 'MINUTE')
+                                            except Exception as send_error:
+                                                logging.error(f"發送資料到 CMB Main Server 失敗 (caller_id: {caller_id}): {send_error}")
+                                    except (ValueError, TypeError) as num_error:
+                                        print(f"{caller_id},資料無效:無法轉換為數字 '{caller_num_str}'  ", end='', flush=True)
+                                        continue
+
+                            except Exception as client_process_error:
+                                logging.error(f"處理客戶端 {caller_id} 時發生錯誤_1: {client_process_error}")
+                                logging.warning(f"發送例行資料 傳送至Server失敗:{client_process_error}, 10秒後繼續發送例行資料!!!")
+                                start_time = datetime.now() - timedelta(seconds=(60-10))
+                                issue = True
+                                break
+
+                        if not issue:
+                            print("", flush=True)
+                            # 記錄狀態
+                            try:
+                                total_websockets = sum(len(client.get('connections', {})) for client in clients.values())
+                                Logger.log(
+                                    f"總共有 {len(clients)} 個紀錄中 ID, "
+                                    f"{active_client} 個有效的 ID, "
+                                    f"{connected_client} 個連線中 ID, "
+                                    f"{total_websockets} 個連線中 Client, "
+                                    f"{manager.count_data()} 個 Server 回覆暫存資料"
+                                )
+
+                                # 統計各類型數量
+                                type_counts = {1: 0, 2: 0, 4: 0, 8: 0}
+                                for caller_id, client_info in clients.items():
+                                    try:
+                                        connections = client_info.get('connections', {})
+                                        for websocket, info in connections.items():
+                                            try:
+                                                ws_type = info.get('ws_type', 0)
+                                                for type_flag in type_counts.keys():
+                                                    if ws_type & type_flag:
+                                                        type_counts[type_flag] += 1
+                                            except Exception as type_error:
+                                                logging.error(f"統計類型時發生錯誤 (caller_id: {caller_id}): {type_error}")
+                                    except Exception as client_stats_error:
+                                        logging.error(f"統計客戶端時發生錯誤 (caller_id: {caller_id}): {client_stats_error}")
+
+                                # 輸出統計結果
+                                for type_flag, count in type_counts.items():
+                                    print(f"Type_{type_flag}:{count} ", end='', flush=True)
+                                print('\n' + '-' * 40, flush=True)
+                                
+                            except Exception as stats_error:
+                                logging.error(f"統計狀態時發生錯誤: {stats_error}")
+                                
+                    except Exception as main_process_error:
+                        logging.error(f"主要處理邏輯發生錯誤: {main_process_error}")
+
+                # 確保每60秒執行一次
+                try:
+                    execution_time = (datetime.now() - start_time).total_seconds()
+                    sleep_time = max(60 - execution_time, 0)
+                    await asyncio.sleep(sleep_time)
+                except Exception as sleep_error:
+                    logging.error(f"睡眠等待時發生錯誤: {sleep_error}")
+                    await asyncio.sleep(60)  # 發生錯誤時使用預設間隔
+                    
+            except Exception as loop_iteration_error:
+                logging.error(f"主要循環迭代發生錯誤: {loop_iteration_error}")
+                await asyncio.sleep(60)  # 發生錯誤時等待一分鐘再繼續
+                
+    except Exception as fatal_error:
+        logging.error(f"periodic_send_frame 發生致命錯誤: {fatal_error}")
+        await asyncio.sleep(60)  # 發生錯誤時等待一分鐘再繼續
 
 
 os_name = ''
-
 
 def get_platform_config():
     global os_name
@@ -3428,14 +3856,14 @@ def get_platform_config():
         # return PORT, "ws://localhost:8088", 'Windows'      # Local WIndows PC
         return PORT, "wss://callnum-receiver-306511771181.asia-east1.run.app/", 'Windows'  # CMB Trying
         # return PORT, "wss://callnum-receiver-410240967190.asia-east1.run.app/", 'Windows'  # CMB Live
-        # return PORT, "ws://35.185.131.62:4000", 'Windows'  # Jando VM
-        # return PORT, "wss://callnum-receiver-306511771181.asia-east1.run.app_/", 'Windows'  # CMB Trying  ***** 故意設錯!
 
     if os_name == 'Linux':
         if 'K_SERVICE' in os.environ:                                                              # Cloud RUN
+            # Cloud Run: 使用環境變數 PORT
             PORT = int(os.environ.get("PORT", 8080))
             return PORT, "wss://callnum-receiver-306511771181.asia-east1.run.app/", 'Cloud_Run'  # CMB Trying
             # return PORT, "wss://callnum-receiver-410240967190.asia-east1.run.app/", 'Cloud_Run'  # CMB Live
+
         try:
             response = requests.get(
                 'http://metadata.google.internal/computeMetadata/v1/',
@@ -3452,32 +3880,11 @@ def get_platform_config():
 
 
 async def main():
-    global ws_server, ConnectionBlocker, start_timestamp, run_mode
+    global ws_fe_server, ConnectionBlocker, start_timestamp, run_mode
     """主程式入口"""
     try:
-        # # 設定台北時區
-        # taipei_tz = pytz.timezone('Asia/Taipei')
-        # # 取得目前時間（台北時間）
-        # taipei_time = datetime.now(taipei_tz)
-        # print("台北時間：", taipei_time.strftime('%Y-%m-%d %H:%M:%S'))
-
-        # （選擇性）設定程式內預設時區為台北
-        # 注意：這不會改變作業系統的時區，只影響程式邏輯
-        # datetime.now(ZoneInfo("Asia/Taipei"))
-        # print("預設為台北時間：", now.strftime("%Y-%m-%d %H:%M:%S"))
-
-        # 列出所有環境變數
-        # print("\n列出所有環境變數")
-        # for key, value in os.environ.items():
-        #     print(f"{key} = {value}")
-
-        # print(".\n", flush=True)
-        # print(".\n", flush=True)
-        # await asyncio.sleep(0.1)
         logging.info(
             f"***** #{os.getenv('K_REVISION', 'PC_Local')},{start_timestamp}, cmb-caller-frontend Ver.{VER} 開始執行! *****")
-        # print(".\n", flush=True)
-        # print(".\n", flush=True)
 
         port, ws_url, platform_name = get_platform_config()
         if platform_name == 'Cloud_Run':
@@ -3496,55 +3903,49 @@ async def main():
                 run_mode = 'Trial'
                 logging.info("CMB Trial Server!")
 
-        if(run_mode == 'Local'):
+        if (run_mode == 'Local'):
             line_p_title = 'PC_'
         else:
             line_p_title = ''
-                
+
         send_result = LineNotifier.send_event_message(
             "event_1", status=f"  ====== {line_p_title}{run_mode} Version! ======\n#{os.getenv('K_REVISION', 'local')},{start_timestamp}, cmb-caller-frontend Ver.{VER} 開始執行!")
 
         logging.info(
             f'platform: {platform_name}, port: {port}, WebSocket URL: {ws_url}')
+
         # 初始化並啟動 WebSocket Client, 連接至 CMB Main Server
-        ws_client = WebSocketClient(ws_url)
-        # asyncio.create_task(ws_client.connect())
+        ws_CmbWebSocketClient = CmbWebSocketClient(ws_url)
+        asyncio.create_task(ws_CmbWebSocketClient.run())
 
-        # 背景執行 run()
-        asyncio.create_task(ws_client.run())
+        # # 使用新的 FastAPI WebSocket Server
+        ws_fe_server = FastAPIWebSocketServer(ws_CmbWebSocketClient)
 
-        # try:
-        #     await ws_client.run()
-        # except KeyboardInterrupt:
-        #     logging.info("收到中斷信號，正在關閉...")
-        # except Exception as e:
-        #     logging.error(f"應用程式發生未預期錯誤: {e}")
-        #     sys.exit(1)
-
-        # 初始化並啟動 WebSocket Server, 對應 Caller
-        ws_server = WebSocketServer('0.0.0.0', port)
-        ws_server.ws_client = ws_client
-        ws_server_task = asyncio.create_task(
-            ws_server.start())     # Webserver 啟動
 
         # 每分鐘例行發送現有之 caller_id 資訊
-        periodic_task = asyncio.create_task(periodic_send_frame(ws_server))
+        periodic_task = asyncio.create_task(periodic_send_frame(ws_fe_server))
+
+        # 啟動 FastAPI HTTP 伺服器（在背景運行）
+        config = uvicorn.Config(
+            fastapi_app,
+            host="0.0.0.0",
+            port=port,
+            log_level="info"
+        )
+        http_server = uvicorn.Server(config)
+        http_server_task = asyncio.create_task(http_server.serve())
+
+        logging.info("uvicorn 服務啟動完成:")
+        # logging.info(f"- HTTP API: https://cmb-caller-frontend-410240967190.asia-east1.run.app/health")
+        logging.info(
+            f"- HTTP API: {ws_url.replace('wss://', 'https://')}health")
+        logging.info(f"- WebSocket: {ws_url}")
 
         interval_seconds = 2     # 每隔 interval_seconds 秒執行一次
         max_cycles = 15          # 最多執行 max_cycles 次循環
         messages_per_cycle = 1   # 每次循環執行 messages_per_cycle 次
         cycle_count = 0
         last_exec_time = time.time() - interval_seconds  # 確保一開始就能執行一次
-
-        # # 啟動 Flask（在背景執行）
-        # if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
-        #     threading.Thread(target=lambda: app.run(
-        #         host='0.0.0.0',
-        #         port=8081,  # 使用不同的端口
-        #         debug=False,
-        #         use_reloader=False
-        #     )).start()
-        #     print("啟動 Flask!", flush=True)
 
         # 保持主執行緒運行
         while True:
@@ -3572,14 +3973,34 @@ async def main():
         traceback.print_exc()
     finally:
         logging.error("cmb-caller-frontend 結束")
-        await ws_server.stop()  # 停止Server
-        await ws_client.close()  # 關閉 WebSocket 連接
-        ws_server_task.cancel()  # 取消Server任務
-        periodic_task.cancel()  # 取消定時任務
+        # 清理資源
+        if 'ws_CmbWebSocketClient' in locals():
+            await ws_CmbWebSocketClient.close()
+        if 'periodic_task' in locals() and not periodic_task.done():
+            periodic_task.cancel()
+        if 'sub_task' in locals() and not sub_task.done():
+            sub_task.cancel()
 
 
 if __name__ == '__main__':
     # Set up logger to log to both console and file
     # setup_logger(log_to_console=True, log_to_file=True, log_level=logging.DEBUG)
     setup_logger(log_to_console=True, log_to_file=True, log_level=logging.INFO)
+
+    # port = int(os.getenv("PORT", 8080))
+    # logger.info(f"Starting server on 0.0.0.0:{port}")
+    # uvicorn.run(
+    #     app, 
+    #     host="0.0.0.0", 
+    #     port=port,
+    #     log_level="info"
+    # )
+
     asyncio.run(main())
+    
+    
+    
+    
+    
+    
+    

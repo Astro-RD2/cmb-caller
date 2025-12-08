@@ -78,17 +78,12 @@ pip show websockets
 2025/09/19  Roy Ching    加入 process_reset 回覆 OK.
 2025/09/22  Roy Ching    修正 例行資料數值為 0 顯示空值之問題.
 2025/09/25  Roy Ching    加入 GCP 斷線問題處理，增加錯誤碼(005).
-2025/09/25  Roy Ching    加入 17.設定時段 (set_time_period)
+2025/09/25  Roy Ching    加入 17.設定時段 (set_time_period).
 2025/10/23  Roy Ching    取消 class WebSocketClient: connect 重連 await asyncio.sleep(0.5).
-2025/11/06  Roy Ching    
+2025/11/21  Roy Ching    增加 FastAPI 功能.
+2025/11/21  Roy Ching    WebSocket 改用 fastapi WebSocket.
 '''
 
-
-# import nest_asyncio
-# import websockets
-
-
-# fastapi_app = FastAPI()
 
 print("============================ Start!!! ============================", flush=True)
 
@@ -127,7 +122,7 @@ print("=== 9 ===", flush=True)
 
 import websockets     # websocket client 用
 
-VER = "20251119 Trial"
+VER = "20251121 Trial"
 
 print(".", flush=True)
 print(".", flush=True)
@@ -158,8 +153,6 @@ print = functools.partial(print, flush=True)
 
 # instance_uuid = str(uuid.uuid4())
 timestamp = time.time()     # 必須有
-
-# app = Flask(__name__)
 
 # 設置 websockets.server 記錄器的日誌級別為 WARNING 或更高
 # 這樣 INFO 級別的 'connection open' 和 'connection closed' 就不會顯示

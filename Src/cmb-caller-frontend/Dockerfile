@@ -14,7 +14,7 @@ WORKDIR /app
 
 # 複製程式碼到容器中
 #COPY . .
-COPY cmb-caller-frontend.py .
+COPY cmb-caller-frontend_trial.py .
 COPY requirements.txt .
 
 # 安裝 pip 最新版本
@@ -30,6 +30,4 @@ ENV PORT 8080
 EXPOSE $PORT
 
 # 運行伺服器
-CMD ["python", "cmb-caller-frontend.py"]
-
-
+CMD ["python", "cmb-caller-frontend_trial.py"]

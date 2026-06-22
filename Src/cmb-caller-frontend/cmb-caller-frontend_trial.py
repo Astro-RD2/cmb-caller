@@ -145,7 +145,7 @@ import __main__
 import websockets  # websocket client 用
 
 
-VER = "20260610"
+VER = "20260618"
 
 print(".", flush=True)
 print(".", flush=True)
@@ -165,16 +165,6 @@ if "K_SERVICE" in os.environ:
 else:
     pubsub_v1 = None
     print("非 GCR 環境，不匯入 google api...", flush=True)
-
-    # try:
-    #     __IPYTHON__  # 如果在 Jupyter 中，這個變數會存在
-    #     import nest_asyncio
-
-    #     nest_asyncio.apply()
-    #     print("nest_asyncio 已啟用 (Jupyter 環境)", flush=True)
-    # except NameError:
-    #     pass  # 在標準 Python 環境中，什麼都不做
-    #     print("nest_asyncio 未啟用 (非 Jupyter 環境)", flush=True)
 
     try:
         from IPython import get_ipython
@@ -233,7 +223,6 @@ print(f"✅ WebSocketState 導入成功: {WebSocketState}")
 fastapi_app = FastAPI(title="CMB Caller Frontend", version=VER)
 
 
-# @app.post("/restart")
 @fastapi_app.get("/restart")
 @fastapi_app.get("/reboot")
 async def simple_restart():
@@ -1126,78 +1115,6 @@ def broadcast_message(content, pmessage):
         return False, str(e)  # Failure, with error message
 
 
-# @app.get("/health")
-# async def health_check():
-#     """健康檢查端點"""
-#     return {"status": "ok", "websocket": "running" if frontend_server else "stopped"}
-
-# @app.post("/broadcast")
-# async def handle_broadcast(request: Request):
-#     """HTTP 接口觸發廣播"""
-#     data = await request.json()
-#     content = data.get('message', '')
-#     broadcast_message(content)
-#     return {"status": "success", "message": "已廣播"}
-
-# @app.post("/internal-message")
-# async def handle_internal_message(request: Request):
-#     """接收其他實例的直接訊息"""
-#     if not is_subscribed:
-#         print("[隊列] 訂閱未就緒，訊息暫存")
-#         message_queue.append(await request.body())
-#         return {"status": "queued"}
-#     return {"status": "ignored"}
-
-
-# @app.route('/', methods=['GET', 'POST'])
-# def my_help():
-#     routes = """
-#     ('/help', methods=['GET', 'POST'])
-#     ('/', methods=['GET', 'POST'])
-#     ('/complete_shop_list', methods=['GET', 'POST'])    # 重建 shop_list
-#     ('/garbage_collection', methods=['GET', 'POST'])
-#     ('/generate_shop_list', methods=['GET', 'POST'])    # 重建 shop_list
-#     ('/hello', methods=['GET', 'POST'])
-#     ('/info', methods=['GET', 'POST'])
-#     ('/last_updated_time', methods=['GET', 'POST'])
-#     ('/no_sleep', methods=['GET', 'POST'])
-#     ('/restart', methods=['GET', 'POST'])
-#     ('/stay_awake', methods=['GET', 'POST'])
-#     ('/system_info', methods=['GET', 'POST'])
-#     ('/update_json_file', methods=['GET', 'POST'])      # 強制更新 shop_list
-#     ('/update_shop_list', methods=['GET', 'POST'])      # 每分鐘檢查 eMail
-#     """
-#     return "<pre>" + routes.replace('\n', '<br>') + "</pre>"
-
-
-# class TaipeiFormatter(logging.Formatter):
-#     def formatTime(self, record, datefmt=None):
-#         dt = datetime.fromtimestamp(record.created, ZoneInfo("Asia/Taipei"))
-#         if datefmt:
-#             return dt.strftime(datefmt)
-#         else:
-#             return dt.isoformat()
-
-# # 設定 logging 使用台北時間
-# # print('設定 logging 使用台北時間')
-# formatter = TaipeiFormatter(fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S")
-# handler = logging.StreamHandler()
-# handler.setFormatter(formatter)
-# logging.basicConfig(level=logging.INFO, handlers=[handler])
-
-
-# def local_datetime():
-#     return f"{datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S')}"
-
-
-# def exit_th():
-#     logging.warning(f'{local_datetime()} 結束程序(程式重新啟動)!!!')
-#     time.sleep(1)
-#     # stop_all_threads(60)   # 60 sec
-#     time.sleep(5)
-#     os._exit(0)
-
-
 class NotifyingLock:
     # def __init__(self):
     def __init__(self, name="unnamed_lock"):
@@ -1362,42 +1279,6 @@ class NotifyingLock:
         return "🔓 鎖定可用 (無持有者)"
 
 
-# class TracedLock:
-#     """追蹤等待時間的鎖"""
-
-#     def __init__(self, name="unnamed_lock"):
-#         self._lock = asyncio.Lock()
-#         self.name = name
-
-#     async def __aenter__(self):
-#         task = asyncio.current_task()
-#         task_id = id(task)
-#         start_wait = time.time()
-
-#         # 立即檢查鎖狀態
-#         if self._lock.locked():
-#             wait_start_time = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-#             print(
-#                 f"等待 {self.name} 鎖... [開始時間: {wait_start_time}]", end='', flush=True)
-
-#             # 實際獲取鎖
-#             await self._lock.acquire()
-
-#             # 計算等待時間並顯示
-#             wait_duration = time.time() - start_wait
-#             wait_end_time = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-#             print(
-#                 f"取得 {self.name} 鎖，等待了 {wait_duration:.2f} 秒 [結束時間: {wait_end_time}]", end='', flush=True)
-#         else:
-#             # 沒有等待，直接獲取鎖
-#             await self._lock.acquire()
-
-#         return self
-
-#     async def __aexit__(self, exc_type, exc_val, exc_tb):
-#         self._lock.release()
-
-
 class PreciseTimeFormatter(logging.Formatter):
     def formatTime(self, record, datefmt=None):
         ct = self.converter(record.created)
@@ -1478,26 +1359,11 @@ def setup_logger(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 
-    # Formatter with only time (no date)
-    # formatter = logging.Formatter(
-    #     '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    #     datefmt='%H:%M:%S'
-    # )
-    # formatter = PreciseTimeFormatter(
-    #     '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    #     datefmt='%H:%M:%F'  # 用 %F 表示要顯示小數秒
-    # )
-
-    # formatter = TwoDecimalSecondFormatter(
-    #     '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    # )
-
     for handler in _logger.handlers:
         handler.setFormatter(formatter)
 
 
 new_add = False
-
 
 class ClientManager:  # 紀錄管理 caller 連線
     global frontend_server, new_add
@@ -1578,29 +1444,7 @@ class ClientManager:  # 紀錄管理 caller 連線
             except Exception as e:
                 logging.error(f"獲取鎖時發生錯誤: {e}")
                 return False  # 添加連接失敗
-            # print("add_connection 3")
-            # if new_add:         # 如果是新連線，先取得之前叫號資訊!
-            #     # await asyncio.sleep(500)    # !!!@@@
-            #     print("add_connection 4")
-            #     try:
-            #         print('add_connection: get_num_info frontend', flush=True)
-            #         data = {             # 設定叫號機
-            #             'action': "get_num_info",   # 取號資訊
-            #             "vendor_id": "tawe",
-            #             "caller_id": caller_id,
-            #             "user_id": "_frontend",
-            #             "uuid": hex(id(websocket))
-            #         }
-            #         try:
-            #             print("add_connection 5")
-            #             # await frontend_server.process_message(json.dumps(data), websocket, is_new_connection=False)
-            #             await frontend_server.process_message(json.dumps(data), websocket, True)
-            #         except Exception as e:
-            #             logging.error(f"處理新連接訊息時發生錯誤: {e}")
-            #     except Exception as e:
-            #         logging.error(f"準備新連接資料時發生錯誤: {e}")
 
-            # print("add_connection 6")
             return True  # 添加連接成功
 
         except Exception as e:
@@ -1763,21 +1607,6 @@ class ClientManager:  # 紀錄管理 caller 連線
 
                 return notify_count
 
-                # print(f'disconnected:{disconnected}', end='\n', flush=True)
-                # 移除已斷開的連接
-                # # 2025/05/13 先不做，由每分鐘例行發送一起處理!   !!!@@@
-                # for caller_id, ws in disconnected:
-                #     # print(f'移除已斷開的連接:{caller_id} ', end='', flush=True)
-                #     # print(f'disconnected:{disconnected}', end='\n', flush=True)
-                #     if caller_id in self.clients and ws in self.clients[caller_id]['connections']:
-                #         del self.clients[caller_id]['connections'][ws]
-                #         print(f'\n2x_discard:{ws}:{caller_id}',
-                #               end='\n', flush=True)
-                #         # print(f'2x_discard:{ws}:{caller_id}    *** BYPASS ***', end='\n', flush=True)
-                #     else:
-                #         logging.warning(
-                #             f"2x_discard:{ws} not found for caller_id {caller_id}")
-
     async def get_caller_num(self, caller_id):  # 12/26
         """獲取指定caller_id的當前號碼"""
         async with self.CLM_lock.acquire(f"ClM_lock get_caller_num: {caller_id}"):
@@ -1811,8 +1640,6 @@ class ClientManager:  # 紀錄管理 caller 連線
 client_manager = ClientManager()
 
 # 從 CMB Main Server 傳入的資料
-
-
 class JSONMemoryManager:
     def __init__(self, max_capacity=100, ttl_seconds=300):
         self.data = {"records": []}
@@ -2034,33 +1861,6 @@ class CmbWebSocketClient:       # 連結 CMB Main Server
                 # await self.server_connection_monitor.record_disconnect(reason)
                 await asyncio.sleep(self.retry_delay)
                 self.retry_delay = min(self.retry_delay * 2, self.max_retry_delay)
-
-    # async def graceful_shutdown(self):
-    #     """執行優雅關閉程序"""
-    #     logging.critical("執行優雅關閉程序...")
-
-    #     try:
-    #         # 1. 取消健康報告任務
-    #         if self.health_report_task:
-    #             self.health_report_task.cancel()
-    #             try:
-    #                 await self.health_report_task
-    #             except asyncio.CancelledError:
-    #                 pass
-
-    #         # 2. 關閉 WebSocket 連接
-    #         if self.cmb_main_server_client:
-    #             await self.cmb_main_server_client.close_main_server()
-
-    #         # 3. 等待短暫時間讓操作完成
-    #         await asyncio.sleep(2)
-
-    #     except Exception as e:
-    #         logging.error(f"優雅關閉過程中發生錯誤: {e}")
-    #     finally:
-    #         # 4. 退出進程
-    #         logging.critical("進程退出")
-    #         sys.exit(1)
 
     async def health_report_loop(self):
         """每10分鐘生成健康報告"""
@@ -3238,18 +3038,6 @@ class FastAPIWebSocketServer:       # WebSocket Server, 連結至 callers 或 We
                 # WebSocket 已關閉，避免再次傳送
                 logging.error(f"WebSocket 已關閉，無法傳送訊息: {e}")
 
-    # async def process_message(self, message, websocket, is_new_connection=False):
-    #     # print(f"process_message:{message}, {websocket}, {is_new_connection}")
-    #     # global get_num_info_frontend
-    #     """處理來自客戶端的訊息"""
-    #     # print(f'Message:{message}', flush=True)
-    #     try:
-    #         # 嘗試解析為JSON格式
-    #         json_data = json.loads(message)
-    #         await self.process_json_message(json_data, websocket, is_new_connection)
-    #     except json.JSONDecodeError:
-    #         # 非JSON格式訊息處理
-    #         await self.process_non_json_message(message, websocket, is_new_connection)
 
     # 來至 Caller
     async def process_json_message(self, json_data, websocket, is_new_connection):
@@ -4303,22 +4091,6 @@ class FastAPIWebSocketServer:       # WebSocket Server, 連結至 callers 或 We
             logging.error(f"強制關閉連線時發生錯誤: {e}")
             traceback.print_exc()
 
-    # async def force_close_connection(self, websocket, caller_id, reason):  # Caller
-    #     """強制關閉連線並清理資源"""
-    #     logging.log(logging.INFO,"強制關閉連線並清理資源")
-    #     try:
-    #         # 直接關閉 websocket
-    #         # 確保連線關閉
-    #         if not websocket.closed:
-    #             await websocket.close(code=1008, reason=reason)
-    #         # 從客戶端管理器移除
-    #         if caller_id in await client_manager.get_all_clients():
-    #             await client_manager.remove_client(caller_id)
-    #         logging.warning(f"已強制關閉 {caller_id} 連線，原因: {reason}")
-    #     except Exception as e:
-    #         logging.error(f"強制關閉連線時發生錯誤: {e}")
-    #         traceback.print_exc()
-
     def parse_message(self, message):  # m_cmd 一律變為小寫, CSV
         """解析接收到的訊息"""
         # message = message.lower()
@@ -4994,17 +4766,5 @@ async def main():
 
 
 if __name__ == "__main__":
-    # Set up logger to log to both console and file
-    # setup_logger(log_to_console=True, log_to_file=True, log_level=logging.DEBUG)
     setup_logger(log_to_console=True, log_to_file=True, log_level=logging.INFO)
-
-    # port = int(os.getenv("PORT", 8080))
-    # logging.info(f"Starting server on 0.0.0.0:{port}")
-    # uvicorn.run(
-    #     app,
-    #     host="0.0.0.0",
-    #     port=port,
-    #     log_level="info"
-    # )
-
     asyncio.run(main())

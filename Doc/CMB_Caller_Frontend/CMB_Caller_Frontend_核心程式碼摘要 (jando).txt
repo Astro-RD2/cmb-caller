@@ -32,3 +32,7 @@ process_json_message()        // 處理 json 封包
 process_non_json_message()    // 處理非 json 封包
 
 //=======================================
+// caller(店家網頁) 連線管理 及 同步訊息
+class ClientManager:
+notify_clients()  // 通知指定caller_id的所有連線
+
